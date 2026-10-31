@@ -1,12 +1,16 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Check,
   ChevronDown,
   Heart,
+  ListMusic,
+  Moon,
   Pause,
   Play,
   Plus,
   Repeat,
   Repeat1,
+  Share2,
   Shuffle,
   SkipBack,
   SkipForward,
@@ -30,8 +34,11 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
     shuffle,
     repeatMode,
     isMaximized,
+    isQueueOpen,
     lyrics,
     activeLyricIndex,
+    sleepTimerRemaining,
+    setIsSleepTimerOpen,
     togglePlayPause,
     nextTrack,
     prevTrack,
@@ -39,13 +46,51 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
     toggleShuffle,
     cycleRepeatMode,
     setIsMaximized,
+    setIsQueueOpen,
   } = usePlayer();
 
   const { isLiked, toggleLike } = useLibrary();
   const liked = isLiked(currentTrack.id);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const activeLineRef = useRef<HTMLButtonElement | null>(null);
+
+  const handleShareSong = async () => {
+    const shareParams = new URLSearchParams({
+      track: currentTrack.id,
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      album: currentTrack.album || 'Single',
+      duration: String(currentTrack.duration || 210),
+      thumb: currentTrack.thumbnailUrl || '',
+    });
+    const shareUrl = `${window.location.origin}${window.location.pathname}?${shareParams.toString()}`;
+    const shareTitle = `${currentTrack.title} — ${currentTrack.artist}`;
+    const shareText = `Listen to "${currentTrack.title}" by ${currentTrack.artist} on Cadence`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2500);
+    } catch {
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2500);
+    }
+  };
 
   useEffect(() => {
     if (!isMaximized || !activeLineRef.current || !lyricsContainerRef.current) return;
@@ -81,7 +126,50 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
           <p className="text-xs font-semibold text-[#F5F5F7] truncate">{currentTrack.album}</p>
         </div>
 
-        <div className="w-10" />
+        <div className="flex items-center gap-2">
+          {/* Queue Button */}
+          <button
+            type="button"
+            onClick={() => setIsQueueOpen(!isQueueOpen)}
+            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+              isQueueOpen
+                ? 'bg-[#E25822]/20 text-[#E25822] border border-[#E25822]/40'
+                : 'bg-black/40 hover:bg-black/60 text-[#94949E] hover:text-[#F5F5F7]'
+            }`}
+            title="Queue"
+            aria-label="Queue"
+          >
+            <ListMusic className="w-4 h-4" />
+          </button>
+
+          {/* Sleep Timer */}
+          <button
+            type="button"
+            onClick={() => setIsSleepTimerOpen(true)}
+            className={`h-10 px-3 rounded-full flex items-center gap-2 transition-all ${
+              sleepTimerRemaining !== null
+                ? 'bg-[#E25822]/20 text-[#E25822] border border-[#E25822]/40 shadow-[0_0_12px_rgba(226,88,34,0.3)]'
+                : 'bg-black/40 hover:bg-black/60 text-[#94949E] hover:text-[#F5F5F7]'
+            }`}
+            title={
+              sleepTimerRemaining !== null
+                ? `Sleep timer: ${Math.ceil(sleepTimerRemaining / 60)}m remaining`
+                : 'Sleep timer'
+            }
+            aria-label="Sleep timer"
+          >
+            <Moon className={`w-4 h-4 ${sleepTimerRemaining !== null ? 'fill-current' : ''}`} />
+            {sleepTimerRemaining !== null ? (
+              <span className="text-xs font-mono font-bold">
+                {sleepTimerRemaining < 60
+                  ? `${sleepTimerRemaining}s`
+                  : `${Math.ceil(sleepTimerRemaining / 60)}m`}
+              </span>
+            ) : (
+              <span className="text-xs font-medium hidden sm:inline">Sleep Timer</span>
+            )}
+          </button>
+        </div>
       </header>
 
       {/* Main Content Split: Artwork & Controls on Left, Pure Spotify Lyrics Stage on Right */}
@@ -90,10 +178,6 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
           {/* Left: Album Art + Controls */}
           <div className="lg:col-span-5 flex flex-col items-center lg:items-start space-y-6">
             <div className="relative w-full max-w-[340px] sm:max-w-[400px] aspect-square rounded-xl overflow-hidden bg-[#121216] shadow-2xl">
-              <div className="opacity-0 pointer-events-none absolute inset-0 w-1 h-1 overflow-hidden">
-                <div id="cadence-yt-player" className="w-full h-full" />
-              </div>
-
               <TrackArtwork
                 src={currentTrack.thumbnailUrl}
                 alt={currentTrack.title}
@@ -109,13 +193,15 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
                 </h2>
                 <p className="text-base text-[#94949E] truncate">{currentTrack.artist}</p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => toggleLike(currentTrack)}
                   className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${
                     liked ? 'text-[#E25822]' : 'text-[#94949E] hover:text-[#F5F5F7]'
                   }`}
+                  title={liked ? 'Remove from Liked Songs' : 'Save to Liked Songs'}
+                  aria-label={liked ? 'Remove from Liked Songs' : 'Save to Liked Songs'}
                 >
                   <Heart className={`w-5 h-5 ${liked ? 'fill-current' : ''}`} />
                 </button>
@@ -123,8 +209,23 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
                   type="button"
                   onClick={() => onOpenPlaylistModal(currentTrack)}
                   className="w-10 h-10 flex items-center justify-center rounded-full text-[#94949E] hover:text-[#F5F5F7] transition-colors"
+                  title="Add to playlist"
+                  aria-label="Add to playlist"
                 >
                   <Plus className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShareSong}
+                  className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${
+                    shareCopied
+                      ? 'text-[#10B981]'
+                      : 'text-[#94949E] hover:text-[#F5F5F7]'
+                  }`}
+                  title={shareCopied ? 'Link copied!' : 'Share song'}
+                  aria-label="Share song"
+                >
+                  {shareCopied ? <Check className="w-5 h-5" /> : <Share2 className="w-5 h-5" />}
                 </button>
               </div>
             </div>
@@ -157,11 +258,17 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
               <button
                 type="button"
                 onClick={toggleShuffle}
-                className={`w-10 h-10 flex items-center justify-center transition-colors ${
+                className={`w-10 h-10 flex items-center justify-center transition-colors relative ${
                   shuffle ? 'text-[#E25822]' : 'text-[#94949E] hover:text-[#F5F5F7]'
                 }`}
+                title={shuffle ? 'Shuffle is on' : 'Shuffle is off'}
+                aria-label={shuffle ? 'Disable shuffle' : 'Enable shuffle'}
+                aria-pressed={shuffle}
               >
                 <Shuffle className="w-5 h-5" />
+                {shuffle && (
+                  <span className="absolute bottom-1 w-1 h-1 rounded-full bg-[#E25822] shadow-[0_0_6px_#E25822]" />
+                )}
               </button>
 
               <button
@@ -210,11 +317,18 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
             </div>
           </div>
 
-          {/* Right: Pure Spotify Lyrics Stage */}
+          {/* Right: Pure Spotify Synchronized Lyrics Stage */}
           <div
             ref={lyricsContainerRef}
-            className="lg:col-span-7 h-[420px] lg:h-[76vh] overflow-y-auto px-2 sm:px-6 py-12 space-y-5 scroll-smooth"
+            className="lg:col-span-7 h-[420px] lg:h-[76vh] overflow-y-auto px-2 sm:px-6 py-12 space-y-3 scroll-smooth"
           >
+            {activeLyricIndex === -1 && lyrics.length > 0 && (
+              <div className="flex items-center gap-2 text-sm sm:text-base text-[#E25822] font-semibold py-3 px-5 rounded-xl bg-[#E25822]/10 border border-[#E25822]/25 mb-4 animate-pulse">
+                <span>♪</span>
+                <span>Instrumental Intro</span>
+              </div>
+            )}
+
             {lyrics.map((line, idx) => {
               const isActive = idx === activeLyricIndex;
               const isPast = idx < activeLyricIndex;
@@ -225,19 +339,34 @@ export const MaximizedPlayer: React.FC<MaximizedPlayerProps> = ({ onOpenPlaylist
                   ref={isActive ? activeLineRef : null}
                   type="button"
                   onClick={() => seekTo(line.time)}
-                  className="block w-full text-left transition-all duration-200 focus:outline-none group"
+                  className={`group block w-full text-left transition-all duration-300 focus:outline-none rounded-xl py-3 px-4 ${
+                    isActive
+                      ? 'bg-[#E25822]/20 border-l-4 border-[#E25822] shadow-[0_0_25px_rgba(226,88,34,0.3)] scale-[1.01]'
+                      : 'hover:bg-white/[0.04]'
+                  }`}
                 >
-                  <span
-                    className={`block text-xl sm:text-3xl font-bold font-display leading-snug transition-colors ${
-                      isActive
-                        ? 'text-[#F5F5F7]'
-                        : isPast
-                          ? 'text-white/25 group-hover:text-white/70'
-                          : 'text-white/40 group-hover:text-white/80'
-                    }`}
-                  >
-                    {line.text}
-                  </span>
+                  <div className="flex items-center justify-between gap-4">
+                    <span
+                      className={`block font-display font-bold leading-snug transition-all duration-300 ${
+                        isActive
+                          ? 'text-white text-2xl sm:text-4xl drop-shadow-[0_2px_12px_rgba(226,88,34,0.45)]'
+                          : isPast
+                            ? 'text-white/30 text-lg sm:text-2xl font-semibold'
+                            : 'text-white/50 group-hover:text-white/85 text-lg sm:text-2xl font-semibold'
+                      }`}
+                    >
+                      {line.text}
+                    </span>
+                    <span
+                      className={`text-xs font-mono-tabular shrink-0 transition-opacity ${
+                        isActive
+                          ? 'text-[#E25822] font-bold opacity-100'
+                          : 'text-[#94949E] opacity-0 group-hover:opacity-75'
+                      }`}
+                    >
+                      {formatTime(line.time)}
+                    </span>
+                  </div>
                 </button>
               );
             })}

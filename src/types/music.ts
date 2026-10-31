@@ -19,6 +19,8 @@ export enum ActiveView {
   LIKED = 'liked',
   PLAYLISTS = 'playlists',
   PLAYLIST_DETAIL = 'playlist_detail',
+  PROFILE = 'profile',
+  ABOUT = 'about',
 }
 
 export interface Track {

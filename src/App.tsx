@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Clock,
+  Camera,
   Disc3,
   Heart,
   Home,
@@ -13,17 +13,28 @@ import {
   ListMusic,
   LogIn,
   LogOut,
+  Menu,
+  Moon,
   Pause,
   Play,
   Plus,
   Search,
+  Shuffle,
   Trash2,
+  Upload,
+  User as UserIcon,
   X,
 } from 'lucide-react';
+import { ImportPlaylistModal } from './components/ImportPlaylistModal';
 import { MaximizedPlayer } from './components/MaximizedPlayer';
+import { DownloadApkModal } from './components/DownloadApkModal';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { PlayerBar } from './components/PlayerBar';
 import { PlaylistModal } from './components/PlaylistModal';
+import { PWAInstallButton } from './components/PWAInstallButton';
 import { QueueDrawer } from './components/QueueDrawer';
+import { SideMenuDrawer } from './components/SideMenuDrawer';
+import { SleepTimerModal } from './components/SleepTimerModal';
 import { TrackArtwork } from './components/TrackArtwork';
 import { TrackRow } from './components/TrackRow';
 import { LibraryProvider, useLibrary } from './context/LibraryContext';
@@ -32,32 +43,63 @@ import { CURATED_TRACKS } from './data/curatedCatalog';
 import { ActiveView, Track } from './types/music';
 
 const GENRE_TILES = [
-  { name: 'The Weeknd', color: 'from-[#E25822] to-[#7C2D12]' },
-  { name: 'Daft Punk', color: 'from-[#9A3412] to-[#431407]' },
-  { name: 'Arctic Monkeys', color: 'from-[#C2410C] to-[#3F1D14]' },
-  { name: 'Tame Impala', color: 'from-[#D94E1F] to-[#451A03]' },
-  { name: 'Dua Lipa', color: 'from-[#EA580C] to-[#571E09]' },
-  { name: 'Coldplay', color: 'from-[#B45309] to-[#291509]' },
+  { name: 'November Rain', color: 'from-[#E25822] to-[#451A03]' },
+  { name: "Sweet Child O' Mine", color: 'from-[#E25822] to-[#7C2D12]' },
+  { name: 'Breaking the Habit', color: 'from-[#9A3412] to-[#431407]' },
+  { name: 'Waiting for the End', color: 'from-[#C2410C] to-[#3F1D14]' },
+  { name: 'Hasnuhana', color: 'from-[#D94E1F] to-[#451A03]' },
+  { name: 'Bring Me to Life', color: 'from-[#EA580C] to-[#571E09]' },
+  { name: 'Lose Yourself', color: 'from-[#B45309] to-[#291509]' },
   { name: 'Linkin Park', color: 'from-[#78350F] to-[#1C1917]' },
-  { name: 'Post Malone', color: 'from-[#E25822]/80 to-[#27272A]' },
+  { name: "Guns N' Roses", color: 'from-[#E25822]/80 to-[#27272A]' },
+];
+
+const POPULAR_SUGGESTIONS = [
+  'November Rain',
+  "Sweet Child O' Mine",
+  'Breaking the Habit',
+  'Waiting for the End',
+  'Hasnuhana',
+  'Bring Me to Life',
+  'Lose Yourself',
+  'Linkin Park',
+  "Guns N' Roses",
 ];
 
 const CadenceWorkspace: React.FC = () => {
-  const { currentTrack, isPlaying, playTrack, togglePlayPause } = usePlayer();
+  const {
+    currentTrack,
+    isPlaying,
+    shuffle,
+    playTrack,
+    shufflePlay,
+    togglePlayPause,
+    sleepTimerRemaining,
+    setIsSleepTimerOpen,
+  } = usePlayer();
 
   const {
     user,
+    profileName,
+    profileAvatar,
     likedTracks,
     playlists,
     signInWithGoogle,
     signOutUser,
+    updateProfileAvatar,
+    updateProfileName,
     deletePlaylist,
     removeTrackFromPlaylist,
   } = useLibrary();
 
   const [activeView, setActiveView] = useState<ActiveView>(ActiveView.HOME);
+  const [isSideMenuOpen, setIsSideMenuOpen] = useState(false);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'playlists' | 'liked'>('all');
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Track[]>([]);
@@ -65,7 +107,15 @@ const CadenceWorkspace: React.FC = () => {
   const [hasSearched, setHasSearched] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
 
+  // Search Predictions and Dropdown Autocomplete
+  const [predictions, setPredictions] = useState<string[]>([]);
+  const [matchingCatalogTracks, setMatchingCatalogTracks] = useState<Track[]>([]);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const searchContainerRef = useRef<HTMLDivElement | null>(null);
+
   const [playlistModalOpen, setPlaylistModalOpen] = useState(false);
+  const [importPlaylistModalOpen, setImportPlaylistModalOpen] = useState(false);
+  const [downloadApkModalOpen, setDownloadApkModalOpen] = useState(false);
   const [trackForPlaylistModal, setTrackForPlaylistModal] = useState<Track | null>(null);
 
   const openPlaylistModalForTrack = (track: Track) => {
@@ -85,6 +135,7 @@ const CadenceWorkspace: React.FC = () => {
     setActiveView(ActiveView.SEARCH);
     setIsSearching(true);
     setHasSearched(true);
+    setIsDropdownOpen(false);
 
     try {
       const res = await fetch(`/api/music/search?q=${encodeURIComponent(trimmed)}`);
@@ -115,7 +166,60 @@ const CadenceWorkspace: React.FC = () => {
     }
   };
 
-  // Automatically trigger search after user types
+  // Live autocomplete predictions as the user types
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      setPredictions([]);
+      setMatchingCatalogTracks([]);
+      return;
+    }
+
+    // Instant local catalog matches (0ms response)
+    const lower = trimmed.toLowerCase();
+    const localMatches = CURATED_TRACKS.filter(
+      (t) =>
+        t.title.toLowerCase().includes(lower) ||
+        t.artist.toLowerCase().includes(lower) ||
+        t.album.toLowerCase().includes(lower)
+    ).slice(0, 3);
+    setMatchingCatalogTracks(localMatches);
+
+    // Live search predictions from backend
+    let isCancelled = false;
+    const fetchPredictions = async () => {
+      try {
+        const res = await fetch(`/api/music/suggestions?q=${encodeURIComponent(trimmed)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!isCancelled && Array.isArray(data.suggestions)) {
+            setPredictions(data.suggestions);
+          }
+        }
+      } catch {
+        // ignore network error
+      }
+    };
+
+    const timer = setTimeout(fetchPredictions, 90);
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [searchQuery]);
+
+  // Click outside to close prediction dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Debounced auto-search when user pauses typing
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!trimmed) {
@@ -124,7 +228,7 @@ const CadenceWorkspace: React.FC = () => {
     }
     const timer = setTimeout(() => {
       executeMusicSearch(trimmed);
-    }, 450);
+    }, 600);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
@@ -147,69 +251,151 @@ const CadenceWorkspace: React.FC = () => {
   const sunsetSessions = CURATED_TRACKS.slice(6, 12);
   const popularHits = CURATED_TRACKS.slice(3, 9);
 
-  // Greeting based on time of day
-  const hour = new Date().getHours();
+  // Live time-of-day greeting that updates automatically throughout the day
+  const [currentHour, setCurrentHour] = useState<number>(() => new Date().getHours());
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentHour(new Date().getHours());
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
   const greeting =
-    hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    currentHour >= 5 && currentHour < 12
+      ? 'Good morning'
+      : currentHour >= 12 && currentHour < 17
+        ? 'Good afternoon'
+        : currentHour >= 17 && currentHour < 21
+          ? 'Good evening'
+          : 'Good night';
+
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingAvatar(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = async () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const size = 256;
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            // Center-crop square
+            const minSide = Math.min(img.width, img.height);
+            const sx = (img.width - minSide) / 2;
+            const sy = (img.height - minSide) / 2;
+            ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            await updateProfileAvatar(compressedDataUrl);
+          }
+        } finally {
+          setIsUploadingAvatar(false);
+          if (avatarInputRef.current) {
+            avatarInputRef.current.value = '';
+          }
+        }
+      };
+      img.onerror = () => setIsUploadingAvatar(false);
+      img.src = String(reader.result);
+    };
+    reader.onerror = () => setIsUploadingAvatar(false);
+    reader.readAsDataURL(file);
+  };
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#0A0A0C] text-[#F5F5F7] flex flex-col lg:p-2 lg:gap-2">
+      <OfflineIndicator />
       {/* SPOTIFY TOP HEADER BAR */}
-      <header className="px-3 sm:px-5 pt-2.5 pb-2 lg:py-2.5 flex flex-col md:flex-row md:items-center md:justify-between gap-2.5 shrink-0 bg-[#0A0A0C]">
+      <header className="px-3 sm:px-5 pt-4 pb-2.5 lg:py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3 shrink-0 bg-[#0A0A0C]">
         {/* Top Row on Mobile / Left+Right Wrapper */}
-        <div className="flex items-center justify-between gap-3 w-full md:w-auto">
-          {/* Left: Cadence Brand + "Made by Prithwish" in small */}
-          <button
-            type="button"
-            onClick={() => setActiveView(ActiveView.HOME)}
-            className="flex items-center gap-2.5 text-left focus:outline-none shrink-0"
-          >
-            <div className="w-9 h-9 rounded-full bg-[#E25822] flex items-center justify-center text-white shrink-0">
-              <Disc3 className="w-5 h-5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-base sm:text-lg font-bold leading-none tracking-tight text-[#F5F5F7] font-display">
-                Cadence
-              </span>
-              <span className="text-[10px] font-medium text-[#94949E] mt-0.5 whitespace-nowrap">
-                Made by Prithwish
-              </span>
-            </div>
-          </button>
+        <div className="flex items-center justify-between gap-2 w-full md:w-auto">
+          {/* Left: 3-Line Hamburger Menu Button + Cadence Brand */}
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsSideMenuOpen(true)}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#16161C] hover:bg-[#24242C] border border-white/[0.08] text-[#F5F5F7] hover:text-[#E25822] flex items-center justify-center shrink-0 active:scale-95 transition-all"
+              title="Open Menu"
+              aria-label="Open Menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
 
-          {/* Mobile Sign In / Profile Button */}
-          <div className="flex md:hidden items-center gap-2 shrink-0">
-            {user ? (
-              <div className="flex items-center gap-2 bg-[#121216] rounded-full pl-3 pr-2 py-1 border border-white/[0.07]">
-                <span className="text-xs font-semibold text-[#F5F5F7] max-w-[90px] truncate">
-                  {user.displayName || user.email}
+            <button
+              type="button"
+              onClick={() => setActiveView(ActiveView.HOME)}
+              className="flex items-center gap-2.5 text-left focus:outline-none shrink-0"
+              title="Cadence Home"
+              aria-label="Cadence Home"
+            >
+              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-[#E25822] flex items-center justify-center text-white shrink-0 shadow-[0_0_14px_rgba(226,88,34,0.4)]">
+                <Disc3 className="w-5 h-5 sm:w-6 sm:h-6" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-lg sm:text-xl font-bold leading-none tracking-tight text-[#F5F5F7] font-display">
+                  Cadence
                 </span>
+                <span className="text-[11px] font-medium text-[#94949E] mt-0.5 whitespace-nowrap">
+                  Made by Prithwish
+                </span>
+              </div>
+            </button>
+          </div>
+
+          {/* Mobile Sign In / Profile / Install Buttons */}
+          <div className="flex md:hidden items-center gap-1.5 shrink-0">
+            <PWAInstallButton variant="compact" />
+            {user ? (
+              <div className="flex items-center gap-1.5 bg-[#121216] rounded-full pl-1.5 pr-1.5 py-1 border border-white/[0.07]">
+                <button
+                  type="button"
+                  onClick={() => setActiveView(ActiveView.PROFILE)}
+                  className="flex items-center gap-1.5"
+                >
+                  {profileAvatar ? (
+                    <img
+                      src={profileAvatar}
+                      alt={profileName || 'Profile'}
+                      className="w-6 h-6 rounded-full object-cover border border-[#E25822]/40 shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : null}
+                  <span className="text-[11px] font-semibold text-[#F5F5F7] max-w-[70px] truncate">
+                    {profileName || user.displayName || user.email}
+                  </span>
+                </button>
                 <button
                   type="button"
                   onClick={signOutUser}
-                  className="w-7 h-7 rounded-full bg-[#18181E] hover:bg-[#E25822] text-[#94949E] hover:text-white flex items-center justify-center transition-colors"
+                  className="w-6 h-6 rounded-full bg-[#18181E] hover:bg-[#E25822] text-[#94949E] hover:text-white flex items-center justify-center transition-colors"
                   title="Log out"
                   aria-label="Log out"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  <LogOut className="w-3 h-3" />
                 </button>
               </div>
             ) : (
               <button
                 type="button"
                 onClick={signInWithGoogle}
-                className="h-9 px-4 rounded-full bg-[#F5F5F7] text-[#0A0A0C] text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                className="h-8 px-3 rounded-full bg-[#F5F5F7] text-[#0A0A0C] text-[11px] font-bold flex items-center gap-1 whitespace-nowrap shrink-0"
               >
-                <LogIn className="w-3.5 h-3.5" />
+                <LogIn className="w-3 h-3" />
                 <span>Log in</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Center: Home Circle Button + Wide Expandable Spotify Pill Search Bar */}
+        {/* Center: Home Circle Button + Wide Expandable Spotify Pill Search Bar with Autocomplete Prediction Dropdown */}
         <div
-          className={`flex items-center justify-center gap-2.5 w-full md:flex-1 transition-all duration-200 ${
+          ref={searchContainerRef}
+          className={`relative flex items-center justify-center gap-2.5 w-full md:flex-1 transition-all duration-200 ${
             isSearchFocused ? 'md:max-w-3xl' : 'md:max-w-xl lg:max-w-2xl'
           }`}
         >
@@ -227,60 +413,184 @@ const CadenceWorkspace: React.FC = () => {
             <Home className="w-5 h-5" />
           </button>
 
-          <form onSubmit={handleSearchSubmit} className="w-full flex-1">
-            <div
-              className={`relative flex items-center w-full h-12 rounded-full transition-all px-4 ${
-                isSearchFocused
-                  ? 'bg-[#262630] border-2 border-[#E25822] shadow-lg shadow-[#E25822]/20'
-                  : 'bg-[#1C1C24] hover:bg-[#24242E] border border-white/[0.15]'
-              }`}
-            >
-              <Search className="w-5 h-5 text-[#E25822] shrink-0 mr-3" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  if (activeView !== ActiveView.SEARCH) {
-                    setActiveView(ActiveView.SEARCH);
-                  }
-                }}
-                onFocus={() => {
-                  setIsSearchFocused(true);
-                  if (activeView !== ActiveView.SEARCH) {
-                    setActiveView(ActiveView.SEARCH);
-                  }
-                }}
-                onBlur={() => setIsSearchFocused(false)}
-                placeholder="What do you want to play?"
-                style={{ color: '#FFFFFF', fontSize: '16px' }}
-                className="w-full flex-1 min-w-0 bg-transparent text-white placeholder-[#94949E] font-medium caret-[#E25822] focus:outline-none"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    setSearchQuery('');
-                    setHasSearched(false);
+          <div className="w-full flex-1 relative">
+            <form onSubmit={handleSearchSubmit} className="w-full">
+              <div
+                className={`relative flex items-center w-full h-12 rounded-full transition-all px-4 ${
+                  isSearchFocused
+                    ? 'bg-[#262630] border-2 border-[#E25822] shadow-lg shadow-[#E25822]/20'
+                    : 'bg-[#1C1C24] hover:bg-[#24242E] border border-white/[0.15]'
+                }`}
+              >
+                <Search className="w-5 h-5 text-[#E25822] shrink-0 mr-3" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setIsDropdownOpen(true);
+                    if (activeView !== ActiveView.SEARCH) {
+                      setActiveView(ActiveView.SEARCH);
+                    }
                   }}
-                  className="text-[#94949E] hover:text-white p-1.5 ml-1 shrink-0"
-                  aria-label="Clear search"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              )}
-            </div>
-          </form>
+                  onFocus={() => {
+                    setIsSearchFocused(true);
+                    setIsDropdownOpen(true);
+                    if (activeView !== ActiveView.SEARCH) {
+                      setActiveView(ActiveView.SEARCH);
+                    }
+                  }}
+                  onBlur={() => {
+                    setIsSearchFocused(false);
+                  }}
+                  placeholder="What do you want to play?"
+                  style={{ color: '#FFFFFF', fontSize: '16px' }}
+                  className="w-full flex-1 min-w-0 bg-transparent text-white placeholder-[#94949E] font-medium caret-[#E25822] focus:outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSearchQuery('');
+                      setHasSearched(false);
+                      setPredictions([]);
+                    }}
+                    className="text-[#94949E] hover:text-white p-1.5 ml-1 shrink-0"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
+            </form>
+
+            {/* PREDICTION / AUTOCOMPLETE DROPDOWN */}
+            {isDropdownOpen && (
+              <div
+                onMouseDown={(e) => e.preventDefault()}
+                className="absolute top-full left-0 right-0 mt-2 z-50 bg-[#16161E] border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden p-2 backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-150 max-h-[420px] overflow-y-auto"
+              >
+                {/* 1. Direct Song Matches */}
+                {matchingCatalogTracks.length > 0 && (
+                  <div className="mb-2">
+                    <p className="px-3 py-1 text-[11px] font-bold text-[#E25822] uppercase tracking-wider">
+                      Songs
+                    </p>
+                    <div className="space-y-0.5">
+                      {matchingCatalogTracks.map((track) => (
+                        <div
+                          key={track.id}
+                          onClick={() => {
+                            playTrack(track, CURATED_TRACKS);
+                            setSearchQuery(track.title);
+                            setIsDropdownOpen(false);
+                          }}
+                          className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.08] cursor-pointer transition-colors group"
+                        >
+                          <TrackArtwork
+                            src={track.thumbnailUrl}
+                            alt={track.title}
+                            className="w-10 h-10 rounded-lg shrink-0"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-white group-hover:text-[#E25822] truncate transition-colors">
+                              {track.title}
+                            </p>
+                            <p className="text-xs text-[#94949E] truncate">{track.artist}</p>
+                          </div>
+                          <span className="text-xs text-[#E25822] opacity-0 group-hover:opacity-100 flex items-center gap-1 font-medium pr-2 shrink-0 transition-opacity">
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                            Play
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. Live Search Predictions */}
+                {predictions.length > 0 && (
+                  <div>
+                    <p className="px-3 py-1 text-[11px] font-bold text-[#94949E] uppercase tracking-wider">
+                      Search Predictions
+                    </p>
+                    <div className="space-y-0.5">
+                      {predictions.map((pred, i) => (
+                        <button
+                          key={`${pred}-${i}`}
+                          type="button"
+                          onClick={() => {
+                            setSearchQuery(pred);
+                            executeMusicSearch(pred);
+                            setIsDropdownOpen(false);
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/[0.08] text-left transition-colors group"
+                        >
+                          <Search className="w-4 h-4 text-[#94949E] group-hover:text-[#E25822] shrink-0 transition-colors" />
+                          <span className="text-sm text-white group-hover:text-[#F5F5F7] truncate font-medium">
+                            {pred}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Popular Suggestions when input is empty */}
+                {searchQuery.trim().length === 0 && (
+                  <div>
+                    <p className="px-3 py-1 text-[11px] font-bold text-[#94949E] uppercase tracking-wider">
+                      Trending Searches
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 p-1">
+                      {POPULAR_SUGGESTIONS.map((term) => (
+                        <button
+                          key={term}
+                          type="button"
+                          onClick={() => {
+                            setSearchQuery(term);
+                            executeMusicSearch(term);
+                            setIsDropdownOpen(false);
+                          }}
+                          className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] text-left transition-colors group"
+                        >
+                          <Search className="w-3.5 h-3.5 text-[#E25822] shrink-0" />
+                          <span className="text-xs sm:text-sm text-[#F5F5F7] group-hover:text-[#E25822] truncate font-medium">
+                            {term}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Desktop Right: Sign In / Profile Button */}
-        <div className="hidden md:flex items-center gap-2 shrink-0">
+        {/* Desktop Right: Install App + Sign In / Profile Button */}
+        <div className="hidden md:flex items-center gap-3 shrink-0">
+          <PWAInstallButton variant="pill" />
           {user ? (
-            <div className="flex items-center gap-2 bg-[#121216] rounded-full pl-3 pr-2 py-1.5 border border-white/[0.07]">
-              <span className="text-xs font-semibold text-[#F5F5F7] max-w-[110px] truncate">
-                {user.displayName || user.email}
-              </span>
+            <div className="flex items-center gap-2 bg-[#121216] rounded-full pl-2 pr-2 py-1.5 border border-white/[0.07]">
+              <button
+                type="button"
+                onClick={() => setActiveView(ActiveView.PROFILE)}
+                className="flex items-center gap-2 hover:opacity-90"
+              >
+                {profileAvatar ? (
+                  <img
+                    src={profileAvatar}
+                    alt={profileName || 'Profile'}
+                    className="w-7 h-7 rounded-full object-cover border border-[#E25822]/40 shrink-0"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : null}
+                <span className="text-xs font-semibold text-[#F5F5F7] max-w-[110px] truncate">
+                  {profileName || user.displayName || user.email}
+                </span>
+              </button>
               <button
                 type="button"
                 onClick={signOutUser}
@@ -456,6 +766,7 @@ const CadenceWorkspace: React.FC = () => {
                 <div className="space-y-4">
                   <h1 className="text-2xl sm:text-3xl font-bold text-[#F5F5F7] font-display">
                     {greeting}
+                    {user && profileName ? `, ${profileName}` : ''}
                   </h1>
 
                   {/* Spotify 6-Tile Quick Grid */}
@@ -679,6 +990,7 @@ const CadenceWorkspace: React.FC = () => {
                           index={idx}
                           queueContext={searchResults}
                           onOpenPlaylistModal={openPlaylistModalForTrack}
+                          hideShareAndDuration
                         />
                       ))}
                     </div>
@@ -716,6 +1028,7 @@ const CadenceWorkspace: React.FC = () => {
                             index={idx}
                             queueContext={CURATED_TRACKS}
                             onOpenPlaylistModal={openPlaylistModalForTrack}
+                            hideShareAndDuration
                           />
                         ))}
                       </div>
@@ -749,9 +1062,25 @@ const CadenceWorkspace: React.FC = () => {
                       type="button"
                       onClick={() => playTrack(likedTracks[0], likedTracks)}
                       className="w-14 h-14 rounded-full bg-[#E25822] hover:bg-[#F06A35] hover:scale-105 text-white flex items-center justify-center shadow-xl transition-transform"
+                      title="Play Liked Songs"
                       aria-label="Play Liked Songs"
                     >
                       <Play className="w-6 h-6 fill-current ml-0.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => shufflePlay(likedTracks)}
+                      className={`h-11 px-4 rounded-full border flex items-center gap-2 text-sm font-bold transition-all active:scale-95 ${
+                        shuffle
+                          ? 'bg-[#E25822]/15 border-[#E25822]/50 text-[#E25822] hover:bg-[#E25822]/25'
+                          : 'bg-[#18181E] hover:bg-white/[0.1] border-white/[0.1] text-[#F5F5F7]'
+                      }`}
+                      title="Shuffle play Liked Songs"
+                      aria-label="Shuffle play Liked Songs"
+                    >
+                      <Shuffle className="w-4 h-4" />
+                      <span>Shuffle</span>
                     </button>
                   </div>
                 )}
@@ -774,13 +1103,10 @@ const CadenceWorkspace: React.FC = () => {
                   </div>
                 ) : (
                   <div>
-                    <div className="grid grid-cols-[auto_1fr_auto] md:grid-cols-[32px_4fr_3fr_auto] gap-4 px-4 py-2 border-b border-white/[0.08] text-xs text-[#94949E] mb-2">
+                    <div className="grid grid-cols-[auto_1fr_auto] gap-3 sm:gap-4 px-3 sm:px-4 py-2 border-b border-white/[0.08] text-xs text-[#94949E] mb-2">
                       <span className="w-6 text-center">#</span>
                       <span>Title</span>
-                      <span className="hidden md:block">Album</span>
-                      <span className="flex justify-end pr-2">
-                        <Clock className="w-4 h-4" />
-                      </span>
+                      <span />
                     </div>
                     <div className="space-y-0.5">
                       {likedTracks.map((track, idx) => (
@@ -790,6 +1116,7 @@ const CadenceWorkspace: React.FC = () => {
                           index={idx}
                           queueContext={likedTracks}
                           onOpenPlaylistModal={openPlaylistModalForTrack}
+                          hideShareAndDuration
                         />
                       ))}
                     </div>
@@ -882,16 +1209,34 @@ const CadenceWorkspace: React.FC = () => {
 
                 <div className="flex items-center gap-4">
                   {selectedPlaylist.tracks.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        playTrack(selectedPlaylist.tracks[0], selectedPlaylist.tracks)
-                      }
-                      className="w-14 h-14 rounded-full bg-[#E25822] hover:bg-[#F06A35] hover:scale-105 text-white flex items-center justify-center shadow-xl transition-transform"
-                      aria-label="Play playlist"
-                    >
-                      <Play className="w-6 h-6 fill-current ml-0.5" />
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          playTrack(selectedPlaylist.tracks[0], selectedPlaylist.tracks)
+                        }
+                        className="w-14 h-14 rounded-full bg-[#E25822] hover:bg-[#F06A35] hover:scale-105 text-white flex items-center justify-center shadow-xl transition-transform"
+                        title="Play playlist"
+                        aria-label="Play playlist"
+                      >
+                        <Play className="w-6 h-6 fill-current ml-0.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => shufflePlay(selectedPlaylist.tracks)}
+                        className={`h-11 px-4 rounded-full border flex items-center gap-2 text-sm font-bold transition-all active:scale-95 ${
+                          shuffle
+                            ? 'bg-[#E25822]/15 border-[#E25822]/50 text-[#E25822] hover:bg-[#E25822]/25'
+                            : 'bg-[#18181E] hover:bg-white/[0.1] border-white/[0.1] text-[#F5F5F7]'
+                        }`}
+                        title="Shuffle play playlist"
+                        aria-label="Shuffle play playlist"
+                      >
+                        <Shuffle className="w-4 h-4" />
+                        <span>Shuffle</span>
+                      </button>
+                    </>
                   )}
 
                   <button
@@ -923,13 +1268,10 @@ const CadenceWorkspace: React.FC = () => {
                   </div>
                 ) : (
                   <div>
-                    <div className="grid grid-cols-[auto_1fr_auto] md:grid-cols-[32px_4fr_3fr_auto] gap-4 px-4 py-2 border-b border-white/[0.08] text-xs text-[#94949E] mb-2">
+                    <div className="grid grid-cols-[auto_1fr_auto] gap-3 sm:gap-4 px-3 sm:px-4 py-2 border-b border-white/[0.08] text-xs text-[#94949E] mb-2">
                       <span className="w-6 text-center">#</span>
                       <span>Title</span>
-                      <span className="hidden md:block">Album</span>
-                      <span className="flex justify-end pr-2">
-                        <Clock className="w-4 h-4" />
-                      </span>
+                      <span />
                     </div>
                     <div className="space-y-0.5">
                       {selectedPlaylist.tracks.map((track, idx) => (
@@ -942,6 +1284,7 @@ const CadenceWorkspace: React.FC = () => {
                           onRemoveFromPlaylist={(trackId) =>
                             removeTrackFromPlaylist(selectedPlaylist.id, trackId)
                           }
+                          hideShareAndDuration
                         />
                       ))}
                     </div>
@@ -949,9 +1292,265 @@ const CadenceWorkspace: React.FC = () => {
                 )}
               </section>
             )}
+
+            {/* VIEW 6: USER PROFILE */}
+            {activeView === ActiveView.PROFILE && (
+              <section className="space-y-6 max-w-3xl">
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarFileChange}
+                  className="hidden"
+                />
+
+                <div className="flex flex-col sm:flex-row sm:items-center gap-6 p-6 rounded-2xl bg-[#18181E]/80 border border-white/[0.08]">
+                  {/* Profile Picture with Upload Overlay */}
+                  <div className="flex flex-col items-center gap-2.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => avatarInputRef.current?.click()}
+                      className="group relative w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-[#E25822] shadow-xl focus:outline-none"
+                      title="Upload custom profile picture"
+                    >
+                      {user && profileAvatar ? (
+                        <img
+                          src={profileAvatar}
+                          alt={profileName || user.displayName || 'Profile'}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-[#1C1C24] to-[#121216] border border-white/[0.08] flex items-center justify-center text-[#94949E] font-display font-bold text-3xl">
+                          {user ? (
+                            (profileName || user.displayName || user.email || 'L')[0].toUpperCase()
+                          ) : (
+                            <UserIcon className="w-12 h-12 text-[#94949E]" />
+                          )}
+                        </div>
+                      )}
+                      {user && (
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-1 text-white transition-opacity">
+                          <Camera className="w-5 h-5 text-[#E25822]" />
+                          <span className="text-[10px] font-bold">Change Photo</span>
+                        </div>
+                      )}
+                    </button>
+
+                    {user ? (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => avatarInputRef.current?.click()}
+                          disabled={isUploadingAvatar}
+                          className="px-3 py-1.5 rounded-full bg-[#E25822]/15 hover:bg-[#E25822]/25 text-[#E25822] border border-[#E25822]/30 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{isUploadingAvatar ? 'Uploading...' : 'Upload Photo'}</span>
+                        </button>
+
+                        {profileAvatar && profileAvatar !== user.photoURL && (
+                          <button
+                            type="button"
+                            onClick={() => updateProfileAvatar('')}
+                            className="px-2.5 py-1.5 rounded-full bg-white/[0.06] hover:bg-red-500/20 text-[#94949E] hover:text-red-400 text-xs font-semibold transition-colors cursor-pointer"
+                            title="Reset to default photo"
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={signInWithGoogle}
+                        className="px-3 py-1.5 rounded-full bg-[#E25822] hover:bg-[#F06A35] text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-[#E25822]/20 transition-colors cursor-pointer"
+                      >
+                        <LogIn className="w-3.5 h-3.5" />
+                        <span>Sign in to customize</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 min-w-0 flex-1">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#E25822]/15 text-[#E25822] border border-[#E25822]/30">
+                      <UserIcon className="w-3 h-3" />
+                      {user ? 'Cloud Synced Profile' : 'Guest Session'}
+                    </span>
+
+                    {user && isEditingName ? (
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          if (nameInput.trim()) {
+                            await updateProfileName(nameInput.trim());
+                          }
+                          setIsEditingName(false);
+                        }}
+                        className="flex items-center gap-2 pt-1"
+                      >
+                        <input
+                          type="text"
+                          value={nameInput}
+                          onChange={(e) => setNameInput(e.target.value)}
+                          placeholder="Your name"
+                          maxLength={40}
+                          className="px-3 py-1.5 rounded-xl bg-[#121216] border border-[#E25822] text-sm font-bold text-[#F5F5F7] focus:outline-none"
+                          autoFocus
+                        />
+                        <button
+                          type="submit"
+                          className="px-3 py-1.5 rounded-xl bg-[#E25822] text-white text-xs font-bold"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingName(false)}
+                          className="px-2.5 py-1.5 rounded-xl bg-white/[0.06] text-[#94949E] text-xs font-semibold"
+                        >
+                          Cancel
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="flex items-center gap-2.5">
+                        <h1 className="text-2xl sm:text-4xl font-bold text-[#F5F5F7] font-display truncate">
+                          {user ? (profileName || user.displayName || 'Listener') : 'Guest'}
+                        </h1>
+                        {user ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNameInput(profileName || user.displayName || '');
+                              setIsEditingName(true);
+                            }}
+                            className="px-2.5 py-1 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[11px] font-semibold text-[#94949E] hover:text-[#F5F5F7] transition-colors shrink-0 cursor-pointer"
+                          >
+                            Edit Name
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
+
+                    <p className="text-sm text-[#94949E] truncate">
+                      {user
+                        ? user.email
+                        : 'Sign in with Google to sync your liked songs, playlists, and profile across devices.'}
+                    </p>
+                  </div>
+
+                  <div className="shrink-0">
+                    {user ? (
+                      <button
+                        type="button"
+                        onClick={signOutUser}
+                        className="px-5 py-2.5 rounded-full bg-white/[0.08] hover:bg-red-500/20 text-[#F5F5F7] hover:text-red-400 text-xs font-bold flex items-center gap-2 transition-colors"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Sign Out</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={signInWithGoogle}
+                        className="px-5 py-2.5 rounded-full bg-[#E25822] hover:bg-[#F06A35] text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-[#E25822]/25 transition-colors"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        <span>Sign in with Google</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Stats Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div
+                    onClick={() => setActiveView(ActiveView.LIKED)}
+                    className="p-5 rounded-2xl bg-[#18181E]/60 hover:bg-[#22222A] border border-white/[0.07] cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-[#94949E]">Liked Songs</span>
+                      <Heart className="w-4 h-4 text-[#E25822]" />
+                    </div>
+                    <p className="text-3xl font-bold text-[#F5F5F7] font-display">
+                      {likedTracks.length}
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => setActiveView(ActiveView.PLAYLISTS)}
+                    className="p-5 rounded-2xl bg-[#18181E]/60 hover:bg-[#22222A] border border-white/[0.07] cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-[#94949E]">Custom Playlists</span>
+                      <ListMusic className="w-4 h-4 text-[#E25822]" />
+                    </div>
+                    <p className="text-3xl font-bold text-[#F5F5F7] font-display">
+                      {playlists.length}
+                    </p>
+                  </div>
+
+                  <div className="p-5 rounded-2xl bg-[#18181E]/60 border border-white/[0.07]">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-[#94949E]">Sleep Timer</span>
+                      <Moon className="w-4 h-4 text-[#E25822]" />
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsSleepTimerOpen(true)}
+                        className="px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-xs font-semibold text-[#F5F5F7] flex items-center gap-1.5 transition-colors"
+                      >
+                        <Moon className="w-3.5 h-3.5 text-[#E25822]" />
+                        <span>
+                          {sleepTimerRemaining !== null
+                            ? `${Math.ceil(sleepTimerRemaining / 60)}m`
+                            : 'Sleep Timer'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* VIEW 7: ABOUT CADENCE */}
+            {activeView === ActiveView.ABOUT && (
+              <section className="max-w-2xl">
+                <div className="p-8 rounded-2xl bg-[#18181E]/80 border border-white/[0.08] space-y-3">
+                  <p className="text-lg sm:text-xl font-semibold text-[#F5F5F7] font-display">
+                    Made this out of boredom, hope it to be working :-!
+                  </p>
+                  <p className="text-xs sm:text-sm text-[#94949E]">
+                    feedback/contact us:{' '}
+                    <a
+                      href="mailto:prithwishdey.100@gmail.com"
+                      className="text-[#E25822] hover:underline"
+                    >
+                      prithwishdey.100@gmail.com
+                    </a>
+                  </p>
+                </div>
+              </section>
+            )}
           </div>
         </main>
       </div>
+
+      {/* Left Slide-Out Side Menu (Triggered by top-left Cadence logo) */}
+      <SideMenuDrawer
+        isOpen={isSideMenuOpen}
+        onClose={() => setIsSideMenuOpen(false)}
+        activeView={activeView}
+        onNavigate={(view) => setActiveView(view)}
+        onSelectPlaylist={(id) => {
+          setSelectedPlaylistId(id);
+          setActiveView(ActiveView.PLAYLIST_DETAIL);
+        }}
+        onCreatePlaylist={openCreatePlaylistModal}
+        onImportPlaylist={() => setImportPlaylistModalOpen(true)}
+        onOpenDownloadApk={() => setDownloadApkModalOpen(true)}
+      />
 
       {/* Mobile Bottom Tab Bar */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#0A0A0C]/95 backdrop-blur-xl border-t border-white/[0.08] grid grid-cols-4 items-center h-14 px-2">
@@ -1021,6 +1620,53 @@ const CadenceWorkspace: React.FC = () => {
           setActiveView(ActiveView.PLAYLIST_DETAIL);
         }}
       />
+
+      {/* Import Playlist Modal */}
+      <ImportPlaylistModal
+        isOpen={importPlaylistModalOpen}
+        onClose={() => setImportPlaylistModalOpen(false)}
+        onImportedPlaylist={(newId) => {
+          setSelectedPlaylistId(newId);
+          setActiveView(ActiveView.PLAYLIST_DETAIL);
+        }}
+      />
+
+      {/* Sleep Timer Modal */}
+      <SleepTimerModal />
+
+      {/* Download APK Explanation Modal */}
+      <DownloadApkModal
+        isOpen={downloadApkModalOpen}
+        onClose={() => setDownloadApkModalOpen(false)}
+      />
+
+      {/* External Browser -> Android APK Auth Handoff Overlay (?apk_auth=1) */}
+      {typeof window !== 'undefined' &&
+        new URLSearchParams(window.location.search).get('apk_auth') === '1' && (
+          <div className="fixed inset-0 z-[200] bg-[#0A0A0C]/95 backdrop-blur-xl flex items-center justify-center p-5">
+            <div className="w-full max-w-md rounded-2xl bg-[#14141A] border border-white/[0.1] p-6 shadow-2xl text-center space-y-5">
+              <div className="w-14 h-14 rounded-full bg-[#E25822] flex items-center justify-center text-white mx-auto shadow-[0_0_25px_rgba(226,88,34,0.45)]">
+                <Disc3 className="w-8 h-8" />
+              </div>
+              <div className="space-y-1.5">
+                <h2 className="text-xl font-bold text-[#F5F5F7] font-display">
+                  Sign in to Cadence App
+                </h2>
+                <p className="text-xs text-[#94949E] leading-relaxed">
+                  Tap below to authenticate with your Google account in your browser and return directly to the Cadence Android app.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={signInWithGoogle}
+                className="w-full py-3.5 px-5 rounded-xl bg-[#E25822] hover:bg-[#F06A35] text-white text-sm font-bold flex items-center justify-center gap-2.5 shadow-lg shadow-[#E25822]/30 transition-all cursor-pointer"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>Continue with Google</span>
+              </button>
+            </div>
+          </div>
+        )}
     </div>
   );
 };

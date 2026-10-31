@@ -1,5 +1,5 @@
 import React from 'react';
-import { ListMusic, Play, Trash2, X } from 'lucide-react';
+import { ListMusic, Play, Shuffle, Trash2, X } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 import { formatTime } from '../utils/formatTime';
 import { TrackArtwork } from './TrackArtwork';
@@ -9,30 +9,53 @@ export const QueueDrawer: React.FC = () => {
     queue,
     currentTrack,
     isPlaying,
+    shuffle,
     isQueueOpen,
     setIsQueueOpen,
     playTrack,
     removeFromQueue,
+    toggleShuffle,
   } = usePlayer();
 
   if (!isQueueOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/60 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs">
       <div className="w-full max-w-md bg-[#121216] border-l border-white/[0.08] h-full flex flex-col pb-24 lg:pb-24">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.07]">
           <div className="flex items-center gap-2">
             <ListMusic className="w-4 h-4 text-[#E25822]" />
             <h3 className="text-base font-semibold text-[#F5F5F7] font-display">Up Next Queue</h3>
+            {shuffle && (
+              <span className="flex items-center gap-1 text-[11px] font-medium text-[#E25822] bg-[#E25822]/15 px-2 py-0.5 rounded-full border border-[#E25822]/30">
+                <Shuffle className="w-3 h-3" />
+                Shuffled
+              </span>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={() => setIsQueueOpen(false)}
-            className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-lg text-[#94949E] hover:text-[#F5F5F7] hover:bg-white/[0.05] transition-colors"
-            aria-label="Close Queue"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={toggleShuffle}
+              className={`p-2 rounded-lg transition-colors ${
+                shuffle
+                  ? 'text-[#E25822] bg-[#E25822]/10'
+                  : 'text-[#94949E] hover:text-[#F5F5F7] hover:bg-white/[0.05]'
+              }`}
+              title={shuffle ? 'Shuffle is on' : 'Shuffle is off'}
+              aria-label={shuffle ? 'Disable shuffle' : 'Enable shuffle'}
+            >
+              <Shuffle className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsQueueOpen(false)}
+              className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-lg text-[#94949E] hover:text-[#F5F5F7] hover:bg-white/[0.05] transition-colors"
+              aria-label="Close Queue"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">

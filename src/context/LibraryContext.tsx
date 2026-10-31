@@ -1,5 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithCredential,
+  signInWithPopup,
+  signOut,
+  User,
+} from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -22,18 +29,30 @@ import {
 } from '../lib/firebase';
 import { CURATED_TRACKS } from '../data/curatedCatalog';
 import { OperationType, Playlist, Track } from '../types/music';
+import { isRunningInNativeApk } from '../utils/nativeStreamResolver';
+
+declare global {
+  interface Window {
+    __cadenceCompleteNativeGoogleAuth?: (idToken?: string, accessToken?: string) => void;
+  }
+}
 
 interface LibraryContextValue {
   user: User | null;
   isAuthReady: boolean;
   authError: string | null;
+  profileName: string | null;
+  profileAvatar: string | null;
   likedTracks: Track[];
   playlists: Playlist[];
   signInWithGoogle: () => Promise<void>;
   signOutUser: () => Promise<void>;
+  updateProfileAvatar: (avatarDataUrl: string) => Promise<void>;
+  updateProfileName: (newName: string) => Promise<void>;
   isLiked: (trackId: string) => boolean;
   toggleLike: (track: Track) => Promise<void>;
   createPlaylist: (name: string, description: string, initialTrack?: Track) => Promise<string>;
+  importPlaylist: (name: string, description: string, tracks: Track[]) => Promise<string>;
   deletePlaylist: (playlistId: string) => Promise<void>;
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
@@ -41,6 +60,22 @@ interface LibraryContextValue {
 
 const GUEST_LIKES_KEY = 'cadence_guest_likes_v1';
 const GUEST_PLAYLISTS_KEY = 'cadence_guest_playlists_v1';
+const CUSTOM_AVATAR_KEY = 'cadence_profile_avatar_v1';
+const LEARNED_NAME_KEY = 'cadence_learned_name_v1';
+
+function extractNameFromUser(u: User): string {
+  if (u.displayName && u.displayName.trim().length > 0) {
+    return u.displayName.trim().split(/\s+/)[0];
+  }
+  if (u.email) {
+    const localPart = u.email.split('@')[0] || '';
+    const cleaned = localPart.replace(/[0-9]+$/g, '').split(/[._-]+/)[0] || localPart;
+    if (cleaned.length > 0) {
+      return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+    }
+  }
+  return 'Listener';
+}
 
 const DEFAULT_GUEST_PLAYLISTS: Playlist[] = [
   {
@@ -58,6 +93,22 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+
+  const [customAvatar, setCustomAvatar] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(CUSTOM_AVATAR_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [learnedName, setLearnedName] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(LEARNED_NAME_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
 
   const [guestLikes, setGuestLikes] = useState<Track[]>(() => {
     try {
@@ -97,11 +148,34 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [guestPlaylists]);
 
-  // Listen to Firebase Auth state
+  // Listen to Firebase Auth state and learn the user's name on sign-in
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setIsAuthReady(true);
+
+      if (currentUser) {
+        const extracted = extractNameFromUser(currentUser);
+        setLearnedName((prev) => {
+          const next = prev || extracted;
+          try {
+            localStorage.setItem(LEARNED_NAME_KEY, next);
+          } catch {
+            // ignore storage error
+          }
+          return next;
+        });
+      } else {
+        // Logged out / Guest: ensure no previous user name or custom photo leaks
+        setLearnedName(null);
+        setCustomAvatar(null);
+        try {
+          localStorage.removeItem(LEARNED_NAME_KEY);
+          localStorage.removeItem(CUSTOM_AVATAR_KEY);
+        } catch {
+          // ignore storage error
+        }
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -113,6 +187,52 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setCloudPlaylists([]);
       return;
     }
+
+    const profileDocRef = doc(db, 'users', user.uid);
+    const unsubProfile = onSnapshot(
+      profileDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (typeof data.displayName === 'string' && data.displayName.trim()) {
+            setLearnedName(data.displayName.trim());
+            try {
+              localStorage.setItem(LEARNED_NAME_KEY, data.displayName.trim());
+            } catch {
+              // ignore
+            }
+          }
+          if (typeof data.avatarUrl === 'string') {
+            const avatarVal = data.avatarUrl || null;
+            setCustomAvatar(avatarVal);
+            try {
+              if (avatarVal) {
+                localStorage.setItem(CUSTOM_AVATAR_KEY, avatarVal);
+              } else {
+                localStorage.removeItem(CUSTOM_AVATAR_KEY);
+              }
+            } catch {
+              // ignore
+            }
+          }
+        } else {
+          // Initialize learned user profile document in Firestore
+          const initialName = sanitizeString(extractNameFromUser(user), 100, 'Listener');
+          const initialAvatar = customAvatar || '';
+          setDoc(profileDocRef, {
+            ownerId: user.uid,
+            displayName: initialName,
+            avatarUrl: initialAvatar.slice(0, 340000),
+            updatedAt: serverTimestamp(),
+          }).catch(() => {
+            // ignore initial sync error
+          });
+        }
+      },
+      () => {
+        // fallback to local learned name/avatar if profile listener fails
+      }
+    );
 
     const likesPath = `users/${user.uid}/likes`;
     const likesQuery = query(collection(db, likesPath), where('ownerId', '==', user.uid));
@@ -164,15 +284,59 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     );
 
     return () => {
+      unsubProfile();
       unsubLikes();
       unsubPlaylists();
     };
   }, [isAuthReady, user]);
 
+  // Handle Google OAuth token handoff inside the native Android APK (from direct OAuth or external browser deep link)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.__cadenceCompleteNativeGoogleAuth = async (idToken?: string, accessToken?: string) => {
+      setAuthError(null);
+      try {
+        const cleanId = idToken && idToken.trim() ? idToken.trim() : null;
+        const cleanAccess = accessToken && accessToken.trim() ? accessToken.trim() : null;
+        if (!cleanId && !cleanAccess) {
+          return;
+        }
+        const credential = GoogleAuthProvider.credential(cleanId, cleanAccess);
+        await signInWithCredential(auth, credential);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to complete Google sign-in.';
+        setAuthError(msg);
+      }
+    };
+    return () => {
+      delete window.__cadenceCompleteNativeGoogleAuth;
+    };
+  }, []);
+
   const signInWithGoogle = async () => {
     setAuthError(null);
+    if (isRunningInNativeApk()) {
+      try {
+        await fetch('/api/native-auth-start');
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
     try {
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('apk_auth') === '1') {
+          const cred = GoogleAuthProvider.credentialFromResult(result);
+          const idTok = cred?.idToken || '';
+          const accTok = cred?.accessToken || '';
+          if (idTok || accTok) {
+            window.location.href = `intent://auth?id_token=${encodeURIComponent(idTok)}&access_token=${encodeURIComponent(accTok)}#Intent;scheme=cadence;package=app.cadence.player;end`;
+          }
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sign-in cancelled or failed.';
       setAuthError(msg);
@@ -183,6 +347,17 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setAuthError(null);
     try {
       await signOut(auth);
+      setUser(null);
+      setLearnedName(null);
+      setCustomAvatar(null);
+      setCloudLikes([]);
+      setCloudPlaylists([]);
+      try {
+        localStorage.removeItem(LEARNED_NAME_KEY);
+        localStorage.removeItem(CUSTOM_AVATAR_KEY);
+      } catch {
+        // ignore
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to sign out.';
       setAuthError(msg);
@@ -268,6 +443,49 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         name: cleanName,
         description: cleanDesc,
         tracks: initialTracks,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      return playlistId;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, docPath);
+    }
+  };
+
+  const importPlaylist = async (
+    name: string,
+    description: string,
+    tracks: Track[]
+  ): Promise<string> => {
+    const playlistId = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const cleanName = sanitizeString(name, 100, 'Imported Playlist');
+    const cleanDesc = (description || '').trim().slice(0, 300);
+    const sanitizedTracks = (Array.isArray(tracks) ? tracks : [])
+      .map(sanitizeTrackForFirestore)
+      .slice(0, 100);
+
+    if (!user) {
+      const newPl: Playlist = {
+        id: playlistId,
+        ownerId: 'guest',
+        name: cleanName,
+        description: cleanDesc,
+        tracks: sanitizedTracks,
+      };
+      setGuestPlaylists((prev) => [newPl, ...prev]);
+      return playlistId;
+    }
+
+    const docPath = `users/${user.uid}/playlists/${playlistId}`;
+    const docRef = doc(db, 'users', user.uid, 'playlists', playlistId);
+
+    try {
+      await setDoc(docRef, {
+        id: playlistId,
+        ownerId: user.uid,
+        name: cleanName,
+        description: cleanDesc,
+        tracks: sanitizedTracks,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -366,19 +584,89 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
+  const updateProfileAvatar = async (avatarDataUrl: string) => {
+    const cleanUrl = (avatarDataUrl || '').slice(0, 340000);
+    setCustomAvatar(cleanUrl || null);
+    try {
+      if (cleanUrl) {
+        localStorage.setItem(CUSTOM_AVATAR_KEY, cleanUrl);
+      } else {
+        localStorage.removeItem(CUSTOM_AVATAR_KEY);
+      }
+    } catch {
+      // ignore storage error
+    }
+
+    if (user) {
+      const currentName = sanitizeString(
+        learnedName || extractNameFromUser(user),
+        100,
+        'Listener'
+      );
+      const profileDocRef = doc(db, 'users', user.uid);
+      try {
+        await setDoc(profileDocRef, {
+          ownerId: user.uid,
+          displayName: currentName,
+          avatarUrl: cleanUrl,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+      }
+    }
+  };
+
+  const updateProfileName = async (newName: string) => {
+    const cleanName = sanitizeString(newName, 100, user ? extractNameFromUser(user) : 'Listener');
+    setLearnedName(cleanName);
+    try {
+      localStorage.setItem(LEARNED_NAME_KEY, cleanName);
+    } catch {
+      // ignore storage error
+    }
+
+    if (user) {
+      const profileDocRef = doc(db, 'users', user.uid);
+      try {
+        await setDoc(profileDocRef, {
+          ownerId: user.uid,
+          displayName: cleanName,
+          avatarUrl: (customAvatar || '').slice(0, 340000),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+      }
+    }
+  };
+
+  const profileName = user
+    ? learnedName || extractNameFromUser(user)
+    : null;
+
+  const profileAvatar = user
+    ? customAvatar || user.photoURL || null
+    : null;
+
   return (
     <LibraryContext.Provider
       value={{
         user,
         isAuthReady,
         authError,
+        profileName,
+        profileAvatar,
         likedTracks,
         playlists,
         signInWithGoogle,
         signOutUser,
+        updateProfileAvatar,
+        updateProfileName,
         isLiked,
         toggleLike,
         createPlaylist,
+        importPlaylist,
         deletePlaylist,
         addTrackToPlaylist,
         removeTrackFromPlaylist,
@@ -394,3 +682,4 @@ export const useLibrary = (): LibraryContextValue => {
   if (!ctx) throw new Error('useLibrary must be used within LibraryProvider');
   return ctx;
 };
+

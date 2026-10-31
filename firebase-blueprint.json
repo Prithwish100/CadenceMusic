@@ -119,9 +119,52 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Stores a user's learned display name and custom uploaded profile picture.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the profile owner",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Learned or customized user display name",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "avatarUrl": {
+          "type": "string",
+          "description": "Custom uploaded profile picture data URL or image URL",
+          "minLength": 0,
+          "maxLength": 350000
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was updated"
+        }
+      },
+      "required": [
+        "ownerId",
+        "displayName",
+        "avatarUrl",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Stores custom profile avatar and display name for a user."
+    },
     "/users/{userId}/likes/{trackId}": {
       "schema": {
         "$ref": "#/entities/LikedSong"
