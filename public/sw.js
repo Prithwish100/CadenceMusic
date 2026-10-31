@@ -1,5 +1,5 @@
 // Cadence PWA Service Worker — Network-First + Now Playing Notification Controls
-const CACHE_NAME = 'cadence-runtime-v6';
+const CACHE_NAME = 'cadence-runtime-v7';
 const NOW_PLAYING_TAG = 'cadence-now-playing';
 
 let lastNotificationPayload = null;

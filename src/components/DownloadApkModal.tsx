@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  AlertCircle,
   CheckCircle2,
   Download,
   HelpCircle,
@@ -37,15 +36,20 @@ export const DownloadApkModal: React.FC<DownloadApkModalProps> = ({ isOpen, onCl
               <Smartphone className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-baseline gap-2">
                 <h2 id="apk-modal-title" className="text-lg font-bold text-[#F5F5F7] font-display">
-                  Cadence for Android
+                  Cadence Flutter APK
                 </h2>
+                <span className="text-xs font-medium text-[#94949E]">
+                  v1.4
+                </span>
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#E25822]/20 text-[#E25822] border border-[#E25822]/30">
-                  APK v2.1
+                  Android 16 Ready
                 </span>
               </div>
-              <p className="text-xs text-[#94949E]">Native Android MediaPlayer + Disk Cache + Google Sign-In</p>
+              <p className="text-xs text-[#94949E]">
+                Native Background Audio + Lock Screen Controls + Google Account Sign-In
+              </p>
             </div>
           </div>
           <button
@@ -58,14 +62,14 @@ export const DownloadApkModal: React.FC<DownloadApkModalProps> = ({ isOpen, onCl
           </button>
         </div>
 
-        {/* User's Note in Italics */}
+        {/* Why choose the APK */}
         <div className="p-4 rounded-xl bg-[#E25822]/10 border-l-4 border-[#E25822] space-y-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-[#E25822]">
             <HelpCircle className="w-4 h-4 shrink-0" />
-            <span>Why choose the APK?</span>
+            <span>Why install the Cadence Android APK?</span>
           </div>
           <p className="text-sm text-[#F5F5F7] leading-relaxed italic">
-            &ldquo;Why apk when you can already install the pwa version? Well the pwa version may buffer due to developmental restrictions of pwa if you face the same problem you can switch to an actual app for smoother playback&rdquo;
+            &ldquo;Browser tabs may throttle background audio due to mobile battery restrictions. Install the native Cadence Flutter APK for uninterrupted background playback, lock-screen controls, and instant Google sign-in.&rdquo;
           </p>
         </div>
 
@@ -84,10 +88,10 @@ export const DownloadApkModal: React.FC<DownloadApkModalProps> = ({ isOpen, onCl
           <div className="p-3 rounded-xl bg-[#1C1C24] border border-white/[0.06] space-y-1">
             <div className="flex items-center gap-1.5 font-semibold text-[#F5F5F7]">
               <Zap className="w-3.5 h-3.5 text-[#E25822]" />
-              <span>Zero Aggressive Throttling</span>
+              <span>External Browser Google Auth</span>
             </div>
             <p className="text-[#94949E] leading-normal">
-              Bypasses Chrome / browser mobile battery-saver limits that pause audio workers.
+              Signs in securely through your browser and automatically redirects right back into the app.
             </p>
           </div>
         </div>
@@ -95,23 +99,23 @@ export const DownloadApkModal: React.FC<DownloadApkModalProps> = ({ isOpen, onCl
         {/* Primary Action Button */}
         <div className="space-y-2.5 pt-1">
           <a
-            href="/cadence.apk?v=2.1.0"
-            download="Cadence-v2.1.apk"
+            href="/cadence-flutter-test.apk?v=1.4.0"
+            download="Cadence-Flutter-v1.4.apk"
             className="w-full py-3 px-4 rounded-xl bg-[#E25822] hover:bg-[#F06A35] text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-[#E25822]/25 hover:shadow-[#E25822]/40 transition-all cursor-pointer group"
           >
             <Download className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" />
             <span>Download Cadence APK</span>
-            <span className="text-xs text-white/70 font-normal">(v2.1 &bull; ~442 KB)</span>
+            <span className="text-[11px] text-white/80 font-normal">v1.4</span>
           </a>
 
           <div className="flex items-center justify-between text-[11px] text-[#94949E] px-1">
-            <span>Direct link from your Cadence server</span>
+            <span>Direct Flutter APK build (v1.4.0)</span>
             <a
-              href="/download/apk?v=2.1.0"
-              download="Cadence-v2.1.apk"
+              href="/download/apk?v=1.4.0"
+              download="Cadence-Flutter-v1.4.apk"
               className="text-[#E25822] hover:underline"
             >
-              Alternative download link (v2.1)
+              Alternative download link <span className="text-[10px] opacity-80">v1.4</span>
             </a>
           </div>
         </div>
@@ -132,12 +136,13 @@ export const DownloadApkModal: React.FC<DownloadApkModalProps> = ({ isOpen, onCl
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-[#94949E] hover:text-[#F5F5F7] hover:bg-white/[0.06] transition-colors"
+            className="px-4 py-2 rounded-xl text-xs font-semibold text-[#94949E] hover:text-[#F5F5F7] hover:bg-white/[0.06] transition-colors cursor-pointer"
           >
-            Continue with Web / PWA
+            Continue on Website
           </button>
         </div>
       </div>
     </div>
   );
 };
+

@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.application' version '8.9.0'
+}
+
+android {
+    namespace 'app.cadence.player'
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+
+    defaultConfig {
+        applicationId 'app.cadence.player'
+        minSdk 24
+        targetSdk 36
+        versionCode 4
+        versionName '2.2.0'
+    }
+
+    signingConfigs {
+        release {
+            storeFile file('keystore/cadence-release.keystore')
+            storePassword System.getenv('CADENCE_KEYSTORE_PASS') ?: 'cadence123'
+            keyAlias 'cadence_release'
+            keyPassword System.getenv('CADENCE_KEY_PASS') ?: 'cadence123'
+            enableV1Signing true
+            enableV2Signing true
+            enableV3Signing true
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = ['src']
+            res.srcDirs = ['res']
+            assets.srcDirs = ['assets']
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Pure Android SDK 36 Platform APIs (MediaSession, MediaPlayer, WebView, Notification.MediaStyle)
+}

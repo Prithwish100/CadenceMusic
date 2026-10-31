@@ -360,7 +360,7 @@ export const SideMenuDrawer: React.FC<SideMenuDrawerProps> = ({
               </span>
             </button>
 
-            {/* Download Android APK Modal Trigger (only shown on website/PWA, hidden inside native APK) */}
+            {/* Download Android APK Modal Trigger (only shown on website, hidden inside native APK) */}
             {!isRunningInNativeApk() && (
               <button
                 type="button"
@@ -373,12 +373,15 @@ export const SideMenuDrawer: React.FC<SideMenuDrawerProps> = ({
                 <span className="flex items-center gap-3">
                   <Download className="w-4 h-4 text-[#E25822] group-hover:scale-110 transition-transform shrink-0" />
                   <span className="flex flex-col text-left">
-                    <span className="text-xs font-semibold text-[#F5F5F7]">Download APK</span>
-                    <span className="text-[10px] font-normal text-[#94949E]">(for better playback)</span>
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="text-xs font-semibold text-[#F5F5F7]">Download APK</span>
+                      <span className="text-[10px] font-medium text-[#94949E]">v1.4</span>
+                    </span>
+                    <span className="text-[10px] font-normal text-[#94949E]">(Flutter Android app)</span>
                   </span>
                 </span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#E25822]/15 text-[#E25822] font-semibold border border-[#E25822]/20">
-                  Android
+                  v1.4
                 </span>
               </button>
             )}

@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
@@ -53,6 +54,10 @@ public class CadenceAudioService extends Service {
     public static final String ACTION_NEXT = "app.cadence.player.ACTION_NEXT";
 
     private static CadenceAudioService instance;
+
+    public static boolean isRunning() {
+        return instance != null;
+    }
 
     private MediaPlayer mediaPlayer;
     private MediaSession mediaSession;
@@ -172,7 +177,10 @@ public class CadenceAudioService extends Service {
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             if (wm != null) {
-                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Cadence:AudioWifiLock");
+                int lockMode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+                wifiLock = wm.createWifiLock(lockMode, "Cadence:AudioWifiLock");
                 wifiLock.setReferenceCounted(false);
             }
         } catch (Exception ignored) {}
@@ -650,7 +658,15 @@ public class CadenceAudioService extends Service {
             }
 
             Notification notification = buildMediaNotification();
-            startForeground(NOTIFICATION_ID, notification);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                );
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
         } catch (Exception ignored) {}
     }
 

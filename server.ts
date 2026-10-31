@@ -23,11 +23,11 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// Direct APK download route for Android users (never cache so users always get latest build)
-app.get(['/download/apk', '/cadence.apk', '/cadence-music.apk'], (_req, res) => {
-  const apkPath = path.join(__dirname, 'public', 'cadence-music.apk');
+// Direct APK download route for Android users (never cache so users always get latest Flutter APK build)
+app.get(['/download/apk', '/cadence-flutter-test.apk', '/cadence.apk', '/cadence-music.apk'], (_req, res) => {
+  const apkPath = path.join(__dirname, 'public', 'cadence-flutter-test.apk');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  res.setHeader('Content-Disposition', 'attachment; filename="Cadence-v2.1.apk"');
+  res.setHeader('Content-Disposition', 'attachment; filename="Cadence-Flutter-v1.4.apk"');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');

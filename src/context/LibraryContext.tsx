@@ -34,18 +34,36 @@ import { isRunningInNativeApk } from '../utils/nativeStreamResolver';
 declare global {
   interface Window {
     __cadenceCompleteNativeGoogleAuth?: (idToken?: string, accessToken?: string) => void;
+    __cadenceEstablishNativeSession?: (sessionInput: unknown) => Promise<void>;
+    __cadenceSetNativeAuthState?: (state: string, error?: string | null) => void;
+    __cadencePendingSession?: unknown;
   }
 }
 
+interface NativeSessionUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  firstName?: string;
+  photoURL: string | null;
+  idToken?: string;
+  accessToken?: string;
+  isNativeSession?: boolean;
+  authMethod?: string;
+}
+
+type CadenceUser = User | NativeSessionUser;
+
 interface LibraryContextValue {
-  user: User | null;
+  user: CadenceUser | null;
   isAuthReady: boolean;
   authError: string | null;
+  authState?: string;
   profileName: string | null;
   profileAvatar: string | null;
   likedTracks: Track[];
   playlists: Playlist[];
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: (mode?: unknown) => Promise<void>;
   signOutUser: () => Promise<void>;
   updateProfileAvatar: (avatarDataUrl: string) => Promise<void>;
   updateProfileName: (newName: string) => Promise<void>;
@@ -62,8 +80,24 @@ const GUEST_LIKES_KEY = 'cadence_guest_likes_v1';
 const GUEST_PLAYLISTS_KEY = 'cadence_guest_playlists_v1';
 const CUSTOM_AVATAR_KEY = 'cadence_profile_avatar_v1';
 const LEARNED_NAME_KEY = 'cadence_learned_name_v1';
+const NATIVE_SESSION_KEY = 'cadence_native_auth_session_v1';
 
-function extractNameFromUser(u: User): string {
+function readStoredNativeSession(): NativeSessionUser | null {
+  try {
+    const raw = localStorage.getItem(NATIVE_SESSION_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.uid && parsed.email) {
+        return parsed as NativeSessionUser;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function extractNameFromUser(u: CadenceUser): string {
   if (u.displayName && u.displayName.trim().length > 0) {
     return u.displayName.trim().split(/\s+/)[0];
   }
@@ -90,13 +124,17 @@ const DEFAULT_GUEST_PLAYLISTS: Playlist[] = [
 const LibraryContext = createContext<LibraryContextValue | undefined>(undefined);
 
 export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [user, setUser] = useState<CadenceUser | null>(() => readStoredNativeSession());
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(() => Boolean(readStoredNativeSession()));
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authState, setAuthState] = useState<string>(() =>
+    readStoredNativeSession() ? 'authenticated' : 'initialising'
+  );
 
   const [customAvatar, setCustomAvatar] = useState<string | null>(() => {
     try {
-      return localStorage.getItem(CUSTOM_AVATAR_KEY) || null;
+      const ns = readStoredNativeSession();
+      return (ns && ns.photoURL) || localStorage.getItem(CUSTOM_AVATAR_KEY) || null;
     } catch {
       return null;
     }
@@ -104,7 +142,8 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [learnedName, setLearnedName] = useState<string | null>(() => {
     try {
-      return localStorage.getItem(LEARNED_NAME_KEY) || null;
+      const ns = readStoredNativeSession();
+      return (ns && (ns.displayName || ns.firstName)) || localStorage.getItem(LEARNED_NAME_KEY) || null;
     } catch {
       return null;
     }
@@ -148,41 +187,152 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [guestPlaylists]);
 
-  // Listen to Firebase Auth state and learn the user's name on sign-in
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setIsAuthReady(true);
+  const applyIncomingNativeSession = React.useCallback(async (sessInput: unknown) => {
+    try {
+      const sess = (
+        typeof sessInput === 'string' ? JSON.parse(sessInput) : sessInput
+      ) as Partial<NativeSessionUser> | null;
+      if (!sess || !sess.email) return;
 
+      setAuthError(null);
+      const fullName =
+        sess.displayName || sess.firstName || sess.email.split('@')[0] || 'Listener';
+      const photo = sess.photoURL || null;
+      const hash = Math.abs(
+        sess.email
+          .toLowerCase()
+          .split('')
+          .reduce((acc, ch) => ((acc << 5) - acc + ch.charCodeAt(0)) | 0, 0)
+      );
+      const normalized: NativeSessionUser = {
+        uid: sess.uid || `google_${hash}`,
+        email: sess.email,
+        displayName: fullName,
+        firstName: sess.firstName || fullName.split(/\s+/)[0] || 'Listener',
+        photoURL: photo,
+        isNativeSession: true,
+        authMethod: sess.authMethod || 'external_browser_oauth_pkce',
+      };
+
+      try {
+        localStorage.setItem(NATIVE_SESSION_KEY, JSON.stringify(normalized));
+        localStorage.setItem(LEARNED_NAME_KEY, fullName);
+        if (photo) {
+          localStorage.setItem(CUSTOM_AVATAR_KEY, photo);
+        }
+      } catch {
+        // ignore
+      }
+
+      setUser(normalized);
+      setLearnedName(fullName);
+      setCustomAvatar(photo);
+      setIsAuthReady(true);
+      setAuthState('authenticated');
+
+      const idTok = sess.idToken && sess.idToken.trim() ? sess.idToken.trim() : null;
+      const accTok = sess.accessToken && sess.accessToken.trim() ? sess.accessToken.trim() : null;
+      if (idTok || accTok) {
+        try {
+          await signInWithCredential(auth, GoogleAuthProvider.credential(idTok, accTok));
+        } catch {
+          // Native session remains active even if Firebase client SDK credential exchange is skipped
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to establish Google session.';
+      setAuthError(msg);
+      setAuthState('auth_failed');
+    }
+  }, []);
+
+  // Listen to Firebase Auth state + Native Android APK bridge state
+  useEffect(() => {
+    let mounted = true;
+
+    const syncFromNativeBridge = () => {
+      if (!isRunningInNativeApk()) return;
+      fetch(`/api/native-auth-status?t=${Date.now()}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (!mounted) return;
+          if (data && data.authenticated && data.session && data.session.email) {
+            applyIncomingNativeSession(data.session);
+          }
+        })
+        .catch(() => {});
+    };
+
+    syncFromNativeBridge();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        syncFromNativeBridge();
+      }
+    };
+    window.addEventListener('focus', syncFromNativeBridge);
+    document.addEventListener('visibilitychange', onVis);
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         const extracted = extractNameFromUser(currentUser);
-        setLearnedName((prev) => {
-          const next = prev || extracted;
-          try {
-            localStorage.setItem(LEARNED_NAME_KEY, next);
-          } catch {
-            // ignore storage error
-          }
-          return next;
-        });
-      } else {
-        // Logged out / Guest: ensure no previous user name or custom photo leaks
-        setLearnedName(null);
-        setCustomAvatar(null);
+        const sess: NativeSessionUser = {
+          uid: currentUser.uid,
+          email: currentUser.email || '',
+          displayName: currentUser.displayName || extracted || 'Listener',
+          firstName: (currentUser.displayName || extracted || 'Listener').split(/\s+/)[0],
+          photoURL: currentUser.photoURL || null,
+          isNativeSession: false,
+        };
         try {
-          localStorage.removeItem(LEARNED_NAME_KEY);
-          localStorage.removeItem(CUSTOM_AVATAR_KEY);
+          localStorage.setItem(NATIVE_SESSION_KEY, JSON.stringify(sess));
+          localStorage.setItem(LEARNED_NAME_KEY, sess.displayName);
+          if (sess.photoURL) {
+            localStorage.setItem(CUSTOM_AVATAR_KEY, sess.photoURL);
+          }
         } catch {
-          // ignore storage error
+          // ignore
+        }
+        setUser(currentUser);
+        setLearnedName((prev) => prev || sess.displayName);
+        if (currentUser.photoURL) {
+          setCustomAvatar((prev) => prev || currentUser.photoURL);
+        }
+        setIsAuthReady(true);
+        setAuthState('authenticated');
+      } else {
+        const ns = readStoredNativeSession();
+        if (ns) {
+          setUser(ns);
+          setLearnedName(ns.displayName || ns.firstName || 'Listener');
+          setCustomAvatar(ns.photoURL || null);
+          setIsAuthReady(true);
+          setAuthState('authenticated');
+        } else {
+          setUser(null);
+          setLearnedName(null);
+          setCustomAvatar(null);
+          setIsAuthReady(true);
+          setAuthState('signed_out');
         }
       }
     });
-    return () => unsubscribe();
-  }, []);
 
-  // Attach Firestore listeners when authenticated
+    return () => {
+      mounted = false;
+      window.removeEventListener('focus', syncFromNativeBridge);
+      document.removeEventListener('visibilitychange', onVis);
+      unsubscribe();
+    };
+  }, [applyIncomingNativeSession]);
+
+  // Attach Firestore listeners when authenticated with Firebase
   useEffect(() => {
-    if (!isAuthReady || !user) {
+    if (
+      !isAuthReady ||
+      !user ||
+      ('isNativeSession' in user && user.isNativeSession) ||
+      !auth.currentUser
+    ) {
       setCloudLikes([]);
       setCloudPlaylists([]);
       return;
@@ -216,7 +366,6 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
           }
         } else {
-          // Initialize learned user profile document in Firestore
           const initialName = sanitizeString(extractNameFromUser(user), 100, 'Listener');
           const initialAvatar = customAvatar || '';
           setDoc(profileDocRef, {
@@ -224,14 +373,10 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
             displayName: initialName,
             avatarUrl: initialAvatar.slice(0, 340000),
             updatedAt: serverTimestamp(),
-          }).catch(() => {
-            // ignore initial sync error
-          });
+          }).catch(() => {});
         }
       },
-      () => {
-        // fallback to local learned name/avatar if profile listener fails
-      }
+      () => {}
     );
 
     const likesPath = `users/${user.uid}/likes`;
@@ -290,42 +435,75 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, [isAuthReady, user]);
 
-  // Handle Google OAuth token handoff inside the native Android APK (from direct OAuth or external browser deep link)
+  // Handle Google OAuth token & session handoff inside the native Android APK (from external browser deep link)
   useEffect(() => {
     if (typeof window === 'undefined') return;
+
+    window.__cadenceSetNativeAuthState = (st: string, err?: string | null) => {
+      if (st) setAuthState(st);
+      if (err) {
+        setAuthError(err);
+        setAuthState('auth_failed');
+      } else if (st === 'signing_in' || st === 'authenticated') {
+        setAuthError(null);
+      }
+    };
+
+    window.__cadenceEstablishNativeSession = applyIncomingNativeSession;
+
     window.__cadenceCompleteNativeGoogleAuth = async (idToken?: string, accessToken?: string) => {
       setAuthError(null);
+      setAuthState('signing_in');
       try {
-        const cleanId = idToken && idToken.trim() ? idToken.trim() : null;
-        const cleanAccess = accessToken && accessToken.trim() ? accessToken.trim() : null;
-        if (!cleanId && !cleanAccess) {
-          return;
-        }
-        const credential = GoogleAuthProvider.credential(cleanId, cleanAccess);
-        await signInWithCredential(auth, credential);
+        await fetch(
+          `/api/native-auth-complete?id_token=${encodeURIComponent(idToken || '')}&access_token=${encodeURIComponent(accessToken || '')}`
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to complete Google sign-in.';
         setAuthError(msg);
+        setAuthState('auth_failed');
       }
     };
+
+    const onNativeAuthEvt = (ev: Event) => {
+      const customEv = ev as CustomEvent;
+      if (customEv && customEv.detail) {
+        applyIncomingNativeSession(customEv.detail);
+      }
+    };
+    window.addEventListener('cadence-native-auth', onNativeAuthEvt);
+
+    if (window.__cadencePendingSession) {
+      const pending = window.__cadencePendingSession;
+      delete window.__cadencePendingSession;
+      applyIncomingNativeSession(pending);
+    }
+
     return () => {
+      window.removeEventListener('cadence-native-auth', onNativeAuthEvt);
+      delete window.__cadenceSetNativeAuthState;
+      delete window.__cadenceEstablishNativeSession;
       delete window.__cadenceCompleteNativeGoogleAuth;
     };
-  }, []);
+  }, [applyIncomingNativeSession]);
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (mode?: unknown) => {
     setAuthError(null);
+    setAuthState('signing_in');
+    const authMode = typeof mode === 'string' && mode === 'native' ? 'native' : 'browser';
     if (isRunningInNativeApk()) {
       try {
-        await fetch('/api/native-auth-start');
+        await fetch(`/api/native-auth-start?mode=${authMode}&t=${Date.now()}`);
       } catch {
-        // ignore
+        setAuthError('Failed to start external browser Google sign-in.');
+        setAuthState('auth_failed');
       }
       return;
     }
 
     try {
       const result = await signInWithPopup(auth, googleProvider);
+      setAuthState('authenticated');
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
         if (params.get('apk_auth') === '1') {
@@ -333,39 +511,50 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const idTok = cred?.idToken || '';
           const accTok = cred?.accessToken || '';
           if (idTok || accTok) {
-            window.location.href = `intent://auth?id_token=${encodeURIComponent(idTok)}&access_token=${encodeURIComponent(accTok)}#Intent;scheme=cadence;package=app.cadence.player;end`;
+            window.location.href = `intent://auth?id_token=${encodeURIComponent(idTok)}&access_token=${encodeURIComponent(accTok)}#Intent;scheme=cadence;package=app.cadence.flutter.test;end`;
           }
         }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sign-in cancelled or failed.';
       setAuthError(msg);
+      setAuthState('auth_failed');
     }
   };
 
   const signOutUser = async () => {
     setAuthError(null);
     try {
-      await signOut(auth);
+      if (isRunningInNativeApk()) {
+        await fetch(`/api/native-auth-signout?t=${Date.now()}`).catch(() => {});
+      }
+      await signOut(auth).catch(() => {});
+    } finally {
       setUser(null);
       setLearnedName(null);
       setCustomAvatar(null);
       setCloudLikes([]);
       setCloudPlaylists([]);
+      setAuthState('signed_out');
       try {
+        localStorage.removeItem(NATIVE_SESSION_KEY);
         localStorage.removeItem(LEARNED_NAME_KEY);
         localStorage.removeItem(CUSTOM_AVATAR_KEY);
       } catch {
         // ignore
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to sign out.';
-      setAuthError(msg);
     }
   };
 
-  const likedTracks = user ? cloudLikes : guestLikes;
-  const playlists = user ? cloudPlaylists : guestPlaylists;
+  const useCloud = Boolean(
+    user && !('isNativeSession' in user && user.isNativeSession) && auth.currentUser && cloudLikes.length > 0
+  );
+  const likedTracks = useCloud ? cloudLikes : guestLikes;
+  const playlists = Boolean(
+    user && !('isNativeSession' in user && user.isNativeSession) && auth.currentUser && cloudPlaylists.length > 0
+  )
+    ? cloudPlaylists
+    : guestPlaylists;
 
   const isLiked = (trackId: string): boolean => {
     const cleanId = sanitizeId(trackId, 64);
@@ -593,11 +782,21 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       } else {
         localStorage.removeItem(CUSTOM_AVATAR_KEY);
       }
+      const ns = readStoredNativeSession();
+      if (ns) {
+        ns.photoURL = cleanUrl || null;
+        localStorage.setItem(NATIVE_SESSION_KEY, JSON.stringify(ns));
+        setUser({ ...ns });
+      }
     } catch {
       // ignore storage error
     }
 
-    if (user) {
+    if (isRunningInNativeApk()) {
+      fetch(`/api/native-auth-update-profile?avatar=${encodeURIComponent(cleanUrl)}`).catch(() => {});
+    }
+
+    if (user && !('isNativeSession' in user && user.isNativeSession) && auth.currentUser) {
       const currentName = sanitizeString(
         learnedName || extractNameFromUser(user),
         100,
@@ -622,11 +821,22 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setLearnedName(cleanName);
     try {
       localStorage.setItem(LEARNED_NAME_KEY, cleanName);
+      const ns = readStoredNativeSession();
+      if (ns) {
+        ns.displayName = cleanName;
+        ns.firstName = cleanName.split(/\s+/)[0] || cleanName;
+        localStorage.setItem(NATIVE_SESSION_KEY, JSON.stringify(ns));
+        setUser({ ...ns });
+      }
     } catch {
       // ignore storage error
     }
 
-    if (user) {
+    if (isRunningInNativeApk()) {
+      fetch(`/api/native-auth-update-profile?name=${encodeURIComponent(cleanName)}`).catch(() => {});
+    }
+
+    if (user && !('isNativeSession' in user && user.isNativeSession) && auth.currentUser) {
       const profileDocRef = doc(db, 'users', user.uid);
       try {
         await setDoc(profileDocRef, {
@@ -642,7 +852,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const profileName = user
-    ? learnedName || extractNameFromUser(user)
+    ? learnedName || user.displayName || extractNameFromUser(user)
     : null;
 
   const profileAvatar = user
@@ -655,6 +865,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         user,
         isAuthReady,
         authError,
+        authState,
         profileName,
         profileAvatar,
         likedTracks,

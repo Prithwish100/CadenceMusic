@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="app.cadence.flutter.test"
+    android:versionCode="5"
+    android:versionName="1.4.0-exp">
+
+    <uses-sdk
+        android:minSdkVersion="24"
+        android:targetSdkVersion="36" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:label="Cadence"
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="false"
+        android:supportsRtl="true"
+        android:appCategory="audio"
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <activity
+            android:name="app.cadence.flutter.test.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- OAuth 2.0 Reverse Client ID & Firebase App ID Deep Links (any host/path) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.googleusercontent.apps.1073976852547-nlpmgu43qb6hl0qp16ot9e9849pcpolo" />
+                <data android:scheme="app-1-1073976852547-web-37f0960c0226433cdfd4f6" />
+                <data android:scheme="app.cadence.flutter.test" />
+                <data android:scheme="cadence-flutter" />
+                <data android:scheme="cadence" />
+            </intent-filter>
+
+            <!-- Explicit host-matched OAuth Deep Links for Chrome Custom Tabs / Intent resolution -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="com.googleusercontent.apps.1073976852547-nlpmgu43qb6hl0qp16ot9e9849pcpolo"
+                    android:host="firebaseauth" />
+                <data
+                    android:scheme="app-1-1073976852547-web-37f0960c0226433cdfd4f6"
+                    android:host="firebaseauth" />
+                <data
+                    android:scheme="app.cadence.flutter.test"
+                    android:host="oauth2redirect" />
+                <data
+                    android:scheme="cadence-flutter"
+                    android:host="auth" />
+                <data
+                    android:scheme="cadence"
+                    android:host="auth" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name="app.cadence.flutter.test.CadenceAudioService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+    </application>
+</manifest>

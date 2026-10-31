@@ -16,6 +16,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
@@ -24,6 +26,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -161,7 +164,7 @@ public class MainActivity extends Activity {
             .replace("; wv;", ";")
             .replaceAll("Version/\\d+\\.\\d+\\s*", "")
             .trim();
-        settings.setUserAgentString(cleanUa + " CadenceAPK/2.1");
+        settings.setUserAgentString(cleanUa + " CadenceAPK/2.2");
 
         try {
             CookieManager cookieManager = CookieManager.getInstance();
@@ -313,6 +316,7 @@ public class MainActivity extends Activity {
                         dialogWindow.setStatusBarColor(Color.parseColor("#141418"));
                         dialogWindow.setNavigationBarColor(Color.parseColor("#0A0A0C"));
                     }
+                    applySystemBarInsets(container);
 
                     authPopupWebView.setWebViewClient(new WebViewClient() {
                         @Override
@@ -395,6 +399,22 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void applySystemBarInsets(final View targetView) {
+        if (targetView == null) return;
+        if (Build.VERSION.SDK_INT >= 30) {
+            targetView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+                @Override
+                public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                    android.graphics.Insets bars = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()
+                    );
+                    v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                    return WindowInsets.CONSUMED;
+                }
+            });
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -407,6 +427,19 @@ public class MainActivity extends Activity {
             window.setStatusBarColor(Color.parseColor("#0A0A0C"));
             window.setNavigationBarColor(Color.parseColor("#0A0A0C"));
         }
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                window.setDecorFitsSystemWindows(false);
+                WindowInsetsController controller = window.getInsetsController();
+                if (controller != null) {
+                    controller.setSystemBarsAppearance(
+                        0,
+                        WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                            | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                    );
+                }
+            } catch (Exception ignored) {}
+        }
 
         if (Build.VERSION.SDK_INT >= 33) {
             try {
@@ -416,9 +449,20 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {}
         }
 
+        FrameLayout rootContainer = new FrameLayout(this);
+        rootContainer.setBackgroundColor(Color.parseColor("#0A0A0C"));
+        applySystemBarInsets(rootContainer);
+
         webView = new CadenceWebView(this);
         webView.setBackgroundColor(Color.parseColor("#0A0A0C"));
-        setContentView(webView);
+        rootContainer.addView(
+            webView,
+            new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        );
+        setContentView(rootContainer);
 
         configureMainWebViewSettings(webView);
 
@@ -512,12 +556,18 @@ public class MainActivity extends Activity {
 
     private void dispatchServiceIntent(Intent intent) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (CadenceAudioService.isRunning()) {
+                startService(intent);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent);
             } else {
                 startService(intent);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            try {
+                startService(intent);
+            } catch (Exception ignored) {}
+        }
     }
 
     private void startInitialMediaService() {
@@ -732,7 +782,7 @@ public class MainActivity extends Activity {
                     return jsonResponse(apiCache.get(cacheKey));
                 }
                 String target = "https://lrclib.net/api/search?q=" + URLEncoder.encode(q.trim(), "UTF-8");
-                String resp = fetchHttp(target, "CadenceMusicPlayer/2.1 (https://cadence.run.place)");
+                String resp = fetchHttp(target, "CadenceMusicPlayer/2.2 (https://cadence.run.place)");
                 if (resp != null && resp.startsWith("[")) {
                     apiCache.put(cacheKey, resp);
                     return jsonResponse(resp);

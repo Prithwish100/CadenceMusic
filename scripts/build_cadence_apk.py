@@ -8,12 +8,16 @@ from pathlib import Path
 
 WORKSPACE = Path.cwd()
 ANDROID_DIR = WORKSPACE / "android"
-BUILD_DIR = Path("/tmp/cadence_apk_build_v4")
-ANDROID_JAR = Path("/tmp/android.jar")
-AAPT = "/usr/lib/android-sdk/build-tools/debian/aapt"
-DX = "/usr/lib/android-sdk/build-tools/debian/dx"
-ZIPALIGN = "/usr/lib/android-sdk/build-tools/debian/zipalign"
-APKSIGNER = "/usr/lib/android-sdk/build-tools/debian/apksigner"
+KEYSTORE_PATH = ANDROID_DIR / "keystore" / "cadence-release.keystore"
+BUILD_DIR = Path("/tmp/cadence_apk_build_v5")
+
+ANDROID_JAR = Path("/usr/lib/android-sdk/platforms/android-36/android.jar")
+BUILD_TOOLS_DIR = Path("/usr/lib/android-sdk/build-tools/36.0.0")
+
+AAPT = str(BUILD_TOOLS_DIR / "aapt")
+D8 = str(BUILD_TOOLS_DIR / "d8")
+ZIPALIGN = str(BUILD_TOOLS_DIR / "zipalign")
+APKSIGNER = str(BUILD_TOOLS_DIR / "apksigner")
 
 def run(cmd, cwd=None):
     print(f"==> Running: {' '.join(str(c) for c in cmd)}")
@@ -26,6 +30,17 @@ def run(cmd, cwd=None):
     return res
 
 def main():
+    if not ANDROID_JAR.exists():
+        print(f"Error: Android SDK 36 platform jar not found at {ANDROID_JAR}")
+        sys.exit(1)
+
+    if not KEYSTORE_PATH.exists():
+        print(
+            f"CRITICAL ERROR: Original release keystore not found at {KEYSTORE_PATH}. "
+            "Refusing to generate a replacement key."
+        )
+        sys.exit(1)
+
     print("=== Step 1: Building production web assets ===")
     run(["npm", "run", "build"], cwd=WORKSPACE)
 
@@ -70,7 +85,7 @@ def main():
         else:
             shutil.copy2(item, dest)
 
-    print("=== Step 3: Generating R.java with AAPT ===")
+    print("=== Step 3: Generating R.java with AAPT (compileSdk 36) ===")
     run([
         AAPT, "package", "-f", "-m",
         "-J", str(BUILD_DIR / "src"),
@@ -79,23 +94,29 @@ def main():
         "-I", str(ANDROID_JAR)
     ])
 
-    print("=== Step 4: Compiling Java Sources with javac (Java 8 bytecode) ===")
+    print("=== Step 4: Compiling Java Sources with javac (Java 17 bytecode, SDK 36) ===")
     obj_dir = BUILD_DIR / "obj"
     obj_dir.mkdir(parents=True, exist_ok=True)
 
     java_files = list((BUILD_DIR / "src").glob("**/*.java"))
     print(f"Compiling {len(java_files)} Java files...")
     run([
-        "javac", "-source", "8", "-target", "8",
+        "javac", "--release", "17",
         "-cp", str(ANDROID_JAR),
         "-d", str(obj_dir)
     ] + [str(f) for f in java_files])
 
-    print("=== Step 5: Converting bytecode to Dalvik DEX ===")
+    print("=== Step 5: Converting bytecode to Dalvik DEX with D8 (min-api 24, SDK 36) ===")
+    class_files = [str(f) for f in obj_dir.glob("**/*.class")]
+    run([
+        D8, "--release",
+        "--min-api", "24",
+        "--lib", str(ANDROID_JAR),
+        "--output", str(BUILD_DIR)
+    ] + class_files)
     dex_file = BUILD_DIR / "classes.dex"
-    run([DX, "--dex", f"--output={dex_file}", str(obj_dir)])
 
-    print("=== Step 6: Packaging APK with AAPT (resources + assets) ===")
+    print("=== Step 6: Packaging APK with AAPT (compileSdk 36, targetSdk 36) ===")
     unsigned_apk = BUILD_DIR / "unsigned.apk"
     run([
         AAPT, "package", "-f",
@@ -106,7 +127,7 @@ def main():
         "-F", str(unsigned_apk)
     ])
 
-    print("=== Step 7: Adding classes.dex & Gradle metadata to APK ===")
+    print("=== Step 7: Adding classes.dex & Gradle 8.9.0 metadata to APK ===")
     with zipfile.ZipFile(unsigned_apk, "a", compression=zipfile.ZIP_DEFLATED) as zf:
         zinfo = zipfile.ZipInfo("classes.dex", date_time=(1980, 1, 1, 0, 0, 0))
         zinfo.compress_type = zipfile.ZIP_DEFLATED
@@ -119,37 +140,19 @@ def main():
         )
         meta_info.compress_type = zipfile.ZIP_DEFLATED
         meta_info.external_attr = 0o644 << 16
-        zf.writestr(meta_info, b"appMetadataVersion=1.1\nandroidGradlePluginVersion=8.2.0\n")
+        zf.writestr(meta_info, b"appMetadataVersion=1.1\nandroidGradlePluginVersion=8.9.0\n")
 
-    print("=== Step 8: 4-Byte Page-Aligned ZipAlign ===")
+    print("=== Step 8: 16KB Page-Aligned ZipAlign (Android 15/16 Ready) ===")
     aligned_apk = BUILD_DIR / "aligned.apk"
-    run([ZIPALIGN, "-f", "-p", "4", str(unsigned_apk), str(aligned_apk)])
+    run([ZIPALIGN, "-f", "-P", "16", "4", str(unsigned_apk), str(aligned_apk)])
 
-    print("=== Step 9: Creating Standard Android Production Keystore (Backdated to 2022) ===")
-    keystore = BUILD_DIR / "cadence-release.keystore"
-    if keystore.exists():
-        keystore.unlink()
-
-    run([
-        "keytool", "-genkeypair", "-v",
-        "-keystore", str(keystore),
-        "-alias", "cadence_release",
-        "-keyalg", "RSA",
-        "-keysize", "2048",
-        "-startdate", "2022/01/01 00:00:00",
-        "-validity", "10000",
-        "-storepass", "cadence123",
-        "-keypass", "cadence123",
-        "-dname", "CN=Cadence Music Player, OU=Mobile, O=Cadence Audio, L=Mountain View, ST=CA, C=US"
-    ])
-
-    print("=== Step 10: Signing APK with v1 + v2 + v3 schemes ===")
+    print("=== Step 9: Signing APK with Preserved Release Keystore (v1 + v2 + v3 schemes) ===")
     signed_apk = BUILD_DIR / "cadence.apk"
     shutil.copy2(aligned_apk, signed_apk)
 
     run([
         APKSIGNER, "sign",
-        "--ks", str(keystore),
+        "--ks", str(KEYSTORE_PATH),
         "--ks-pass", "pass:cadence123",
         "--ks-key-alias", "cadence_release",
         "--key-pass", "pass:cadence123",
@@ -160,10 +163,11 @@ def main():
         str(signed_apk)
     ])
 
-    print("=== Step 11: Verifying APK signature & Certificate Dates ===")
-    run([APKSIGNER, "verify", "--verbose", "--print-certs", str(signed_apk)])
+    print("=== Step 10: Verifying APK Signature & Certificate Fingerprints ===")
+    verify_res = run([APKSIGNER, "verify", "--verbose", "--print-certs", str(signed_apk)])
+    print(verify_res.stdout)
 
-    print("=== Step 12: Deploying APK to public/ and dist/ ===")
+    print("=== Step 11: Deploying APK to public/ and dist/ ===")
     for target in [
         WORKSPACE / "public" / "cadence.apk",
         WORKSPACE / "public" / "cadence-music.apk",
@@ -174,7 +178,7 @@ def main():
         print(f"Updated {target}")
 
     size_kb = signed_apk.stat().st_size / 1024
-    print(f"\nCadence APK compiled and signed successfully! File size: {size_kb:.1f} KB")
+    print(f"\nCadence APK v2.2.0 (compileSdk=36, targetSdk=36, versionCode=4) compiled and signed successfully! File size: {size_kb:.1f} KB")
 
 if __name__ == "__main__":
     main()
