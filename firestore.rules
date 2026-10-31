@@ -1,0 +1,123 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Hardened Primitives
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Blueprint: LikedSong
+    function isValidLikedSong(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'title', 'artist', 'album', 'duration', 'thumbnailUrl', 'createdAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'title', 'artist', 'album', 'duration', 'thumbnailUrl', 'createdAt'])
+        && data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.artist is string && data.artist.size() >= 1 && data.artist.size() <= 200
+        && data.album is string && data.album.size() >= 1 && data.album.size() <= 200
+        && data.duration is number && data.duration >= 0 && data.duration <= 86400
+        && data.thumbnailUrl is string && data.thumbnailUrl.size() >= 1 && data.thumbnailUrl.size() <= 500
+        && data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint: Playlist
+    function isValidPlaylist(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'name', 'description', 'tracks', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'name', 'description', 'tracks', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.description is string && data.description.size() >= 0 && data.description.size() <= 300
+        && data.tracks is list && data.tracks.size() <= 100
+        && (data.tracks.size() == 0 || (
+          data.tracks[0] is map
+          && data.tracks[0].keys().hasAll(['id', 'title', 'artist', 'album', 'duration', 'thumbnailUrl'])
+          && data.tracks[0].keys().hasOnly(['id', 'title', 'artist', 'album', 'duration', 'thumbnailUrl'])
+          && data.tracks[0].id is string && data.tracks[0].id.size() >= 1 && data.tracks[0].id.size() <= 64
+          && data.tracks[0].title is string && data.tracks[0].title.size() >= 1 && data.tracks[0].title.size() <= 200
+          && data.tracks[0].artist is string && data.tracks[0].artist.size() >= 1 && data.tracks[0].artist.size() <= 200
+          && data.tracks[0].album is string && data.tracks[0].album.size() >= 1 && data.tracks[0].album.size() <= 200
+          && data.tracks[0].duration is number && data.tracks[0].duration >= 0 && data.tracks[0].duration <= 86400
+          && data.tracks[0].thumbnailUrl is string && data.tracks[0].thumbnailUrl.size() >= 1 && data.tracks[0].thumbnailUrl.size() <= 500
+        ))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Collection 1: User Liked Songs
+    match /users/{userId}/likes/{trackId} {
+      allow get: if isOwner(userId) && isValidId(userId) && isValidId(trackId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(trackId)
+        && isValidLikedSong(incoming())
+        && incoming().id == trackId
+        && incoming().ownerId == userId
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(trackId)
+        && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Collection 2: User Custom Playlists
+    match /users/{userId}/playlists/{playlistId} {
+      allow get: if isOwner(userId) && isValidId(userId) && isValidId(playlistId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(playlistId)
+        && isValidPlaylist(incoming())
+        && incoming().id == playlistId
+        && incoming().ownerId == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidPlaylist(incoming())
+        && isOwner(userId)
+        && isValidId(userId)
+        && isValidId(playlistId)
+        && existing().ownerId == request.auth.uid
+        && incoming().id == existing().id
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Update playlist tracks
+          incoming().diff(existing()).affectedKeys().hasOnly(['tracks', 'updatedAt']) ||
+          // Action 2: Edit playlist details (name, description, or tracks)
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'tracks', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'updatedAt'])
+        );
+      allow delete: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(playlistId)
+        && resource.data.ownerId == request.auth.uid;
+    }
+  }
+}

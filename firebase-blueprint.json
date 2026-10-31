@@ -1,0 +1,138 @@
+{
+  "entities": {
+    "LikedSong": {
+      "title": "LikedSong",
+      "description": "A music track liked and saved by an authenticated user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "YouTube video ID of the track",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user who liked the song",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Track title",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "artist": {
+          "type": "string",
+          "description": "Track artist or channel name",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "album": {
+          "type": "string",
+          "description": "Album or collection name",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "duration": {
+          "type": "number",
+          "description": "Track duration in seconds"
+        },
+        "thumbnailUrl": {
+          "type": "string",
+          "description": "Track cover artwork URL",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the track was liked"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "title",
+        "artist",
+        "album",
+        "duration",
+        "thumbnailUrl",
+        "createdAt"
+      ]
+    },
+    "Playlist": {
+      "title": "Playlist",
+      "description": "A user-created custom playlist containing saved music tracks.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique playlist identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the playlist owner",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Playlist display title",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional playlist description",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "tracks": {
+          "type": "array",
+          "description": "Bounded list of up to 100 track metadata objects in the playlist"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the playlist was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the playlist was last modified"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "description",
+        "tracks",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/likes/{trackId}": {
+      "schema": {
+        "$ref": "#/entities/LikedSong"
+      },
+      "description": "Stores tracks liked by a specific user."
+    },
+    "/users/{userId}/playlists/{playlistId}": {
+      "schema": {
+        "$ref": "#/entities/Playlist"
+      },
+      "description": "Stores custom playlists created by a specific user."
+    }
+  }
+}
